@@ -2,7 +2,25 @@
 
 ## Overview
 
-A minimal music player web application that allows users to search and play songs from YouTube Music. The application features a clean, dark-first interface inspired by YouTube Music, Spotify, and Apple Music design principles. Users can search for songs, view results in a card-based grid layout, and play audio with full playback controls including play/pause, next/previous track navigation, volume control, and progress tracking.
+A minimal music player web application that allows users to search and play songs from YouTube Music. The application features a clean, dark-first interface inspired by YouTube Music and Spotify design principles. Users can search for songs, view results in a card-based grid layout, and interact with full playback controls including play/pause, next/previous track navigation, volume control, progress tracking, and keyboard shortcuts.
+
+## Current Status
+
+**✅ Completed Features:**
+- Beautiful dark-themed UI with YouTube Music-inspired red accent color
+- Fully functional search with real-time YouTube Music results
+- Grid layout displaying song cards with thumbnails, titles, artists, and durations
+- Complete audio player bar with all controls (play/pause, next/previous, volume, progress)
+- Keyboard shortcuts (Space for play/pause, Arrow keys for seeking)
+- Loading states and empty states
+- Responsive design
+- Smooth animations and hover effects
+
+**⚠️ Known Limitation:**
+- Audio streaming may fail intermittently due to YouTube's anti-bot protections (403 errors)
+- YouTube actively updates their player obfuscation to prevent scraping
+- This affects all ytdl-based libraries (@distube/ytdl-core, play-dl, etc.)
+- The UI and all controls work perfectly; only the actual audio playback is affected by external factors
 
 ## User Preferences
 
@@ -21,84 +39,147 @@ Preferred communication style: Simple, everyday language.
 **UI Component System:**
 - Shadcn UI component library based on Radix UI primitives
 - Tailwind CSS for utility-first styling with custom design tokens
-- Custom design system following Material Design principles with dark mode as primary theme
+- Custom design system with dark mode as primary theme
 - Component structure uses the "New York" style variant from Shadcn
 
 **Design System:**
-- Color palette optimized for dark mode with a vibrant red accent (YouTube Music inspired)
-- Typography using Inter for UI elements and DM Sans for display text
-- Consistent spacing and elevation patterns using CSS custom properties
-- Responsive design with mobile-first approach
+- Primary accent: YouTube Music red (HSL: 0 85% 60%)
+- Dark background with subtle elevation layers
+- Typography using system font stack optimized for readability
+- Consistent spacing and border radius (8px for cards, 6px for buttons)
+- Smooth hover and active state transitions
+- Custom elevation utilities (hover-elevate, active-elevate-2)
+
+**Key Components:**
+- **MusicPlayer.tsx**: Main page container with search integration
+- **SearchBar.tsx**: Search input with debounced queries
+- **MusicCard.tsx**: Individual song card with play action
+- **AudioPlayer.tsx**: Persistent bottom player bar
+- **EmptyState.tsx**: Display when no search performed
+- **LoadingState.tsx**: Skeleton loading cards
 
 **State Management:**
 - Local component state using React hooks (useState, useRef, useEffect)
-- Audio playback state managed in AudioPlayer component with imperative handle for external control
-- Search query and current song selection managed in MusicPlayer parent component
-- No global state management library needed due to simple state requirements
+- Audio playback state managed in AudioPlayer component
+- Search query and current song selection in MusicPlayer component
+- TanStack Query handles API caching and loading states
 
 ### Backend Architecture
 
 **Server Framework:**
 - Express.js server with TypeScript
 - ESM (ES Modules) configuration for modern JavaScript syntax
-- Custom middleware for request logging with response time tracking
-- Error handling middleware for consistent error responses
+- CORS enabled for API access
+- Request logging middleware
 
-**API Design:**
-- RESTful API with `/api/search` endpoint for music search
-- Query parameter-based search (`?q=<query>`)
-- Returns structured JSON with song metadata (id, title, artist, duration, thumbnail, audioUrl)
-- Uses Zod schemas for request validation
+**API Endpoints:**
+- `GET /api/search?q=<query>` - Search YouTube Music
+  - Returns: { songs: Song[], query: string }
+  - Uses ytsr library for YouTube search
+- `GET /api/stream/:videoId` - Stream audio for a video
+  - Uses @distube/ytdl-core with agent configuration
+  - Returns: audio/webm stream with CORS headers
+  - Note: May fail due to YouTube's anti-bot measures
 
-**Music Data Source:**
-- Integrates with YouTube via `play-dl` library to search and retrieve audio streams
-- Searches YouTube videos with audio content
-- Extracts direct audio URLs from video formats for playback
-- Transforms YouTube video data into normalized Song objects
+**Music Data Flow:**
+1. User enters search query
+2. Frontend calls /api/search
+3. Backend uses ytsr to search YouTube
+4. Results are normalized to Song format
+5. Frontend displays cards with /api/stream/:videoId URLs
+6. When user clicks play, audio element requests stream
+7. Backend attempts to extract and proxy audio using ytdl-core
 
 ### Data Storage Solutions
 
 **Current Implementation:**
-- In-memory storage using MemStorage class (Map-based storage)
-- User schema defined but not actively used in current music player functionality
-- Prepared for database migration with Drizzle ORM configuration
+- In-memory storage using MemStorage class (Map-based)
+- No persistent storage required for music player functionality
+- Database infrastructure prepared but not actively used
 
 **Database Schema (Prepared):**
 - Drizzle ORM configured for PostgreSQL via Neon serverless
-- Schema definitions in shared/schema.ts for type safety across frontend and backend
-- Migration files will be generated in ./migrations directory
-- Connection string expected via DATABASE_URL environment variable
-
-**Rationale:**
-- In-memory storage chosen for development simplicity and fast iteration
-- Database infrastructure prepared but not required for core music playback functionality
-- User storage interface (IStorage) abstracts storage implementation for easy swapping
+- Schema definitions in shared/schema.ts
+- Ready for future features like playlists or favorites
 
 ### External Dependencies
 
 **Third-Party Services:**
-- **YouTube Music/YouTube**: Primary music source accessed via play-dl library
-  - Searches video content with audio
-  - Retrieves direct audio stream URLs
-  - Provides metadata (title, artist/channel, duration, thumbnails)
-  - No official API key required (uses play-dl's scraping approach)
+- **YouTube**: Primary music source
+  - Search via ytsr (no API key required)
+  - Audio extraction via @distube/ytdl-core
+  - Note: Subject to YouTube's anti-scraping measures
 
 **Key Libraries:**
-- **play-dl**: YouTube data extraction and audio URL retrieval
-- **Radix UI**: Accessible component primitives (@radix-ui/* packages)
-- **TanStack Query**: Async state management and caching
-- **Zod**: Runtime type validation for API requests/responses
-- **Drizzle ORM**: Database toolkit (configured for future use)
-- **Neon Database**: Serverless PostgreSQL (configured for future use)
+- **ytsr**: YouTube search without authentication
+- **@distube/ytdl-core**: YouTube audio extraction
+- **Radix UI**: Accessible component primitives
+- **TanStack Query**: Async state and caching
+- **Zod**: Runtime type validation
+- **Lucide React**: Icon library
 
 **Development Tools:**
-- **Vite**: Frontend build tool with plugins for Replit integration
-- **TSX**: TypeScript execution for development server
-- **esbuild**: Production backend bundling
-- **Tailwind CSS**: Utility-first CSS framework with PostCSS
+- **Vite**: Frontend build tool with Replit integration
+- **TSX**: TypeScript execution for dev server
+- **Tailwind CSS**: Utility-first CSS framework
 
-**Notable Architectural Decisions:**
-- Chose play-dl over official YouTube API to avoid quota limits and API key management
-- Selected Radix UI for accessibility compliance and headless component architecture
-- Implemented shared schema types between frontend and backend for type safety
-- Used Vite's alias resolution for clean import paths (@/, @shared/, @assets/)
+## Technical Decisions & Rationale
+
+**Why ytsr + ytdl-core?**
+- Avoids YouTube API quota limits
+- No API key management needed
+- Direct access to music content
+- Trade-off: Reliability depends on YouTube's tolerance
+
+**Why Dark Theme First?**
+- Music apps traditionally use dark interfaces
+- Reduces eye strain during extended listening
+- YouTube Music and Spotify use dark themes
+- Better visual focus on album artwork
+
+**Why In-Memory Storage?**
+- MVP doesn't require data persistence
+- Faster development iteration
+- Easy to migrate to database later if needed
+
+**Why TanStack Query?**
+- Built-in caching reduces API calls
+- Automatic loading/error states
+- Optimistic updates support
+- Industry standard for React data fetching
+
+## Project Structure
+
+```
+├── client/
+│   └── src/
+│       ├── components/
+│       │   ├── ui/              # Shadcn components
+│       │   ├── AudioPlayer.tsx  # Bottom player bar
+│       │   ├── MusicCard.tsx    # Song card component
+│       │   ├── SearchBar.tsx    # Search input
+│       │   ├── EmptyState.tsx   # No search state
+│       │   └── LoadingState.tsx # Loading skeleton
+│       ├── pages/
+│       │   └── MusicPlayer.tsx  # Main page
+│       ├── lib/
+│       │   └── queryClient.ts   # TanStack Query setup
+│       └── App.tsx              # Root component
+├── server/
+│   ├── routes.ts                # API endpoints
+│   ├── storage.ts               # Storage interface
+│   └── index.ts                 # Express server
+├── shared/
+│   └── schema.ts                # Shared types
+└── design_guidelines.md         # Design system docs
+```
+
+## Recent Changes
+
+**October 16, 2025:**
+- Switched from play-dl to ytsr + @distube/ytdl-core for better compatibility
+- Added ytdl agent configuration to improve YouTube compatibility
+- Implemented comprehensive error handling in streaming endpoint
+- Completed E2E testing verifying all UI features work correctly
+- Documented YouTube streaming limitation as known issue
+- All UI components and interactions are fully functional and tested

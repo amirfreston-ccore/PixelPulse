@@ -6,12 +6,11 @@ import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "re
 
 interface AudioPlayerProps {
   currentSong: Song | null;
-  onNext?: () => void;
-  onPrevious?: () => void;
+  playlist: Song[];
 }
 
 export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlayerProps>(
-  ({ currentSong, onNext, onPrevious }, ref) => {
+  ({ currentSong, playlist }, ref) => {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -20,9 +19,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   const [isMuted, setIsMuted] = useState(false);
 
   useEffect(() => {
-    if (currentSong?.audioUrl && audioRef.current) {
-      audioRef.current.src = currentSong.audioUrl;
-      audioRef.current.play();
+    if (currentSong?.id) {
       setIsPlaying(true);
     }
   }, [currentSong]);
@@ -34,37 +31,15 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   }, [volume, isMuted]);
 
   const togglePlayPause = () => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
-    }
+    setIsPlaying(!isPlaying);
   };
 
   useImperativeHandle(ref, () => ({
     togglePlayPause
   }));
 
-  const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
-    }
-  };
-
-  const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setDuration(audioRef.current.duration);
-    }
-  };
-
   const handleProgressChange = (value: number[]) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = value[0];
-      setCurrentTime(value[0]);
-    }
+    setCurrentTime(value[0]);
   };
 
   const formatTime = (time: number) => {
@@ -82,32 +57,33 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
 
   return (
     <>
-      <audio
-        ref={audioRef}
-        onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
-        onEnded={() => setIsPlaying(false)}
-      />
+      {currentSong && (
+        <iframe
+          width="100%"
+          height="80"
+          src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&controls=1`}
+          allow="autoplay; encrypted-media"
+          allowFullScreen
+          className="rounded-lg"
+        />
+      )}
       
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border">
         <div className="max-w-7xl mx-auto">
-          <div className="relative px-4 py-2">
-            <Slider
-              value={[currentTime]}
-              max={duration || 100}
-              step={1}
-              onValueChange={handleProgressChange}
-              className="w-full cursor-pointer"
-              aria-label="Seek"
-              data-testid="slider-progress"
-            />
-            <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
-              <span data-testid="text-current-time">{formatTime(currentTime)}</span>
-              <span data-testid="text-duration">{formatTime(duration)}</span>
-            </div>
+          <div className="px-4 py-4">
+            {currentSong && (
+              <iframe
+                width="100%"
+                height="80"
+                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&controls=1`}
+                allow="autoplay; encrypted-media"
+                allowFullScreen
+                className="rounded-lg mb-4"
+              />
+            )}
           </div>
 
-          <div className="flex items-center justify-between px-4 pb-4 md:pb-6">
+          <div className="flex items-center justify-between px-4 pb-4">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <div className="h-14 w-14 rounded-lg bg-muted overflow-hidden flex-shrink-0">
                 {currentSong.thumbnail ? (
@@ -133,44 +109,16 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
               </div>
             </div>
 
-            <div className="flex items-center gap-4 md:gap-6">
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={onPrevious}
-                disabled={!onPrevious}
-                className="h-10 w-10"
-                data-testid="button-previous"
-                aria-label="Previous track"
-              >
-                <SkipBack className="h-5 w-5" />
-              </Button>
-
-              <Button
-                size="icon"
-                onClick={togglePlayPause}
-                className="h-12 w-12 rounded-full"
-                data-testid="button-play-pause"
-                aria-label={isPlaying ? "Pause" : "Play"}
-              >
-                {isPlaying ? (
-                  <Pause className="h-5 w-5 fill-current" />
-                ) : (
-                  <Play className="h-5 w-5 fill-current" />
-                )}
-              </Button>
-
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={onNext}
-                disabled={!onNext}
-                className="h-10 w-10"
-                data-testid="button-next"
-                aria-label="Next track"
-              >
-                <SkipForward className="h-5 w-5" />
-              </Button>
+            <div className="flex-1">
+              <h4 className="font-semibold mb-2">Playlist ({playlist.length} songs)</h4>
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {playlist.map((song, index) => (
+                  <div key={song.id} className={`text-sm p-2 rounded ${currentSong?.id === song.id ? 'bg-accent' : 'bg-muted/50'}`}>
+                    <div className="font-medium truncate">{song.title}</div>
+                    <div className="text-xs text-muted-foreground truncate">{song.artist}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="hidden md:flex items-center gap-3 flex-1 justify-end">

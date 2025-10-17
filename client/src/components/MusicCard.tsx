@@ -13,6 +13,8 @@ export function MusicCard({ song, onPlay, isPlaying }: MusicCardProps) {
     <div 
       className="group relative bg-card border border-card-border rounded-xl overflow-hidden transition-all duration-200 hover:scale-105 hover-elevate"
       data-testid={`card-song-${song.id}`}
+          onClick={() => onPlay(song)}
+
     >
       <div className="aspect-square relative bg-muted">
         {song.thumbnail ? (
@@ -30,18 +32,14 @@ export function MusicCard({ song, onPlay, isPlaying }: MusicCardProps) {
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
         
         <Button
-          size="icon"
+          size="sm"
           variant="default"
           onClick={() => onPlay(song)}
-          className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-12 w-12 rounded-full transition-all duration-300 ${
-            isPlaying 
-              ? 'opacity-100 scale-100' 
-              : 'opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-110'
-          }`}
-          data-testid={`button-play-${song.id}`}
-          aria-label={`Play ${song.title}`}
+          className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+          data-testid={`button-add-${song.id}`}
+          aria-label={`Add ${song.title} to queue`}
         >
-          <Play className="h-5 w-5 fill-current" />
+          Add to Queue
         </Button>
       </div>
       

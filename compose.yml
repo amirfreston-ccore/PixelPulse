@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16.8-alpine3.20
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: ytdb
+      POSTGRES_USER: ytdb
+      POSTGRES_DB: ytdb
+    ports:
+      - 6032:5432
+#     volumes:
+#       - db_data_yt:/var/lib/postgresql/data
+
+# volumes:
+#   db_data_yt:

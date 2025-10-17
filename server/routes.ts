@@ -281,6 +281,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const elapsedMs = Date.now() - playbackStartTime;
       const currentPosition = pausedAt + (elapsedMs / 1000);
 
+      console.log(`[Auto-advance check] Song: "${currentSong.title}", Position: ${Math.floor(currentPosition)}s / ${durationSeconds}s, Playing: ${isPlaying}`);
+
       // Move to next song if current song has finished
       if (currentPosition >= durationSeconds) {
         if (currentSongIndex < playlist.length - 1) {
@@ -291,7 +293,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pausedAt = 0;
         playbackStartTime = Date.now();
 
-        console.log(`Auto-advancing to song ${currentSongIndex + 1}: ${playlist[currentSongIndex]?.title}`);
+        console.log(`🎵 Auto-advancing to song ${currentSongIndex + 1}: ${playlist[currentSongIndex]?.title}`);
 
         io.emit('playlistUpdate', {
           playlist,

@@ -16,6 +16,15 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   ({ currentSong, playlist, isPlaying, currentPosition, socket }, ref) => {
   const [volume, setVolume] = useState(70);
   const [isMuted, setIsMuted] = useState(false);
+  const [iframeKey, setIframeKey] = useState(0);
+
+  // Force iframe reload when song changes
+  useEffect(() => {
+    if (currentSong) {
+      console.log('AudioPlayer: Current song changed to:', currentSong.title);
+      setIframeKey(prev => prev + 1);
+    }
+  }, [currentSong?.id]);
 
   const togglePlayPause = () => {
     if (socket) {
@@ -59,7 +68,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
           <div className="px-4 py-4">
             {currentSong && (
               <iframe
-                key={currentSong.id}
+                key={`player-${currentSong.id}-${iframeKey}`}
                 width="100%"
                 height="80"
                 src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&start=${Math.floor(currentPosition)}&controls=1&enablejsapi=1`}
@@ -68,7 +77,32 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
                 className="rounded-lg mb-4"
               />
             )}
-            <div className="text-xs text-muted-foreground text-center">
+            <div className="flex items-center justify-center gap-4 mt-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handlePrevious}
+                disabled={!socket}
+              >
+                <SkipBack className="h-4 w-4" />
+              </Button>
+              <Button
+                size="sm"
+                onClick={togglePlayPause}
+                disabled={!socket}
+              >
+                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleNext}
+                disabled={!socket}
+              >
+                <SkipForward className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="text-xs text-muted-foreground text-center mt-2">
               Playing at: {formatTime(currentPosition)} {isPlaying ? '▶' : '⏸'}
             </div>
           </div>

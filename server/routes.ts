@@ -126,12 +126,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/playlist/add", (req, res) => {
     const song = req.body;
 
-    // Check if song already exists in playlist
-    const exists = playlist.find(s => s.id === song.id);
-    if (exists) {
-      return res.json({ success: false, message: 'Song already in playlist' });
-    }
-
+    // Allow duplicate songs in queue (people can request the same song multiple times)
     playlist.push(song);
 
     // If no song is playing, start the first song

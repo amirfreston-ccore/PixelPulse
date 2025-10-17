@@ -15,6 +15,7 @@ export default function MusicPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentPosition, setCurrentPosition] = useState(0);
   const [serverTime, setServerTime] = useState(0);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -73,8 +74,44 @@ export default function MusicPlayer() {
 
   const songs = searchResults?.songs || [];
 
+  const handleStartSession = () => {
+    setHasUserInteracted(true);
+    // Play a silent audio to unlock autoplay
+    const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+    audio.play().catch(() => {});
+  };
+
+  // Auto-start session when a song is playing
+  useEffect(() => {
+    if (currentSong && isPlaying && !hasUserInteracted) {
+      // Auto-unlock autoplay with user gesture simulation
+      const unlockAutoplay = () => {
+        setHasUserInteracted(true);
+        // Play silent audio to unlock
+        const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+        audio.play().catch(() => {});
+      };
+
+      // Add click listener to unlock on first user interaction
+      const handleFirstClick = () => {
+        unlockAutoplay();
+        document.removeEventListener('click', handleFirstClick);
+      };
+
+      document.addEventListener('click', handleFirstClick);
+
+      return () => document.removeEventListener('click', handleFirstClick);
+    }
+  }, [currentSong, isPlaying, hasUserInteracted]);
+
   return (
     <div className="min-h-screen bg-background pb-32">
+      {!hasUserInteracted && currentSong && isPlaying && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-primary text-primary-foreground px-6 py-3 rounded-lg shadow-lg animate-pulse">
+          Click anywhere to enable audio
+        </div>
+      )}
+
       <SearchBar onSearch={handleSearch} isLoading={isLoading} />
 
       <div className="flex h-[calc(100vh-80px)]">

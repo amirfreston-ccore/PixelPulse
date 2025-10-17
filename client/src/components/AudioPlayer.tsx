@@ -17,6 +17,8 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   const [volume, setVolume] = useState(70);
   const [isMuted, setIsMuted] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+  const [hasUnmuted, setHasUnmuted] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Force iframe reload when song changes
   useEffect(() => {
@@ -25,6 +27,26 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
       setIframeKey(prev => prev + 1);
     }
   }, [currentSong?.id]);
+
+  // Unmute when user interacts
+  useEffect(() => {
+    if (!hasUnmuted) {
+      const handleFirstInteraction = () => {
+        setHasUnmuted(true);
+        // Send unmute command to YouTube iframe
+        if (iframeRef.current) {
+          iframeRef.current.contentWindow?.postMessage(
+            '{"event":"command","func":"unMute","args":""}',
+            '*'
+          );
+        }
+        document.removeEventListener('click', handleFirstInteraction);
+      };
+
+      document.addEventListener('click', handleFirstInteraction);
+      return () => document.removeEventListener('click', handleFirstInteraction);
+    }
+  }, [hasUnmuted]);
 
   const togglePlayPause = () => {
     if (socket) {
@@ -68,11 +90,12 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
           <div className="px-4 py-4">
             {currentSong && (
               <iframe
+                ref={iframeRef}
                 key={`player-${currentSong.id}-${iframeKey}`}
                 width="100%"
                 height="80"
-                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&start=${Math.floor(currentPosition)}&controls=1&enablejsapi=1`}
-                allow="autoplay; encrypted-media"
+                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&mute=${hasUnmuted ? 0 : 1}&start=${Math.floor(currentPosition)}&controls=1&enablejsapi=1`}
+                allow="autoplay; encrypted-media; picture-in-picture"
                 allowFullScreen
                 className="rounded-lg mb-4"
               />

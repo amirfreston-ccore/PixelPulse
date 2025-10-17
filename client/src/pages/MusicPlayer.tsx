@@ -6,15 +6,18 @@ import { AudioPlayer } from "@/components/AudioPlayer";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingState } from "@/components/LoadingState";
 import { Song, SearchResult } from "@shared/schema";
-import { io } from "socket.io-client";
+import { io, Socket } from "socket.io-client";
 
 export default function MusicPlayer() {
   const [searchQuery, setSearchQuery] = useState("");
   const [playlist, setPlaylist] = useState<Song[]>([]);
   const [currentSongIndex, setCurrentSongIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const audioPlayerRef = useRef<{ togglePlayPause: () => void }>(null);
-  
+  const [currentPosition, setCurrentPosition] = useState(0);
+  const [serverTime, setServerTime] = useState(0);
+  const socketRef = useRef<Socket | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
   const currentSong = playlist[currentSongIndex] || null;
 
   const { data: searchResults, isLoading, error } = useQuery<SearchResult>({
@@ -24,13 +27,31 @@ export default function MusicPlayer() {
 
   useEffect(() => {
     const socket = io();
-    
+    socketRef.current = socket;
+
     socket.on('playlistUpdate', (data) => {
+      console.log('Playlist update received:', {
+        currentSongIndex: data.currentSongIndex,
+        isPlaying: data.isPlaying,
+        currentSong: data.playlist[data.currentSongIndex]?.title
+      });
+
       setPlaylist(data.playlist);
       setCurrentSongIndex(data.currentSongIndex);
       setIsPlaying(data.isPlaying);
+      setServerTime(data.serverTime);
+
+      // Calculate accurate position
+      if (data.currentPosition !== undefined) {
+        setCurrentPosition(data.currentPosition);
+      } else if (data.isPlaying && data.playbackStartTime) {
+        const elapsed = Date.now() - data.playbackStartTime;
+        setCurrentPosition(data.pausedAt + elapsed / 1000);
+      } else {
+        setCurrentPosition(data.pausedAt || 0);
+      }
     });
-    
+
     return () => socket.disconnect();
   }, []);
 
@@ -53,9 +74,9 @@ export default function MusicPlayer() {
   const songs = searchResults?.songs || [];
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background pb-32">
       <SearchBar onSearch={handleSearch} isLoading={isLoading} />
-      
+
       <div className="flex h-[calc(100vh-80px)]">
         <div className="flex-1 p-4 overflow-y-auto">
           <h2 className="text-xl font-semibold mb-4">Search Results</h2>
@@ -90,21 +111,16 @@ export default function MusicPlayer() {
           {currentSong && (
             <div className="mb-4 p-3 bg-accent rounded-lg">
               <p className="text-sm text-muted-foreground mb-1">Now Playing</p>
-              <div className="flex items-center gap-3 mb-2">
-                <img src={currentSong.thumbnail} alt={currentSong.title} className="w-10 h-10 rounded object-cover" />
+              <div className="flex items-center gap-3">
+                <img src={currentSong.thumbnail} alt={currentSong.title} className="w-16 h-16 rounded object-cover" />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium truncate">{currentSong.title}</p>
                   <p className="text-sm text-muted-foreground truncate">{currentSong.artist}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {Math.floor(currentPosition)}s / {currentSong.duration} {isPlaying ? '▶' : '⏸'}
+                  </p>
                 </div>
               </div>
-              <iframe
-                key={currentSong.id}
-                width="100%"
-                height="60"
-                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&controls=1`}
-                allow="autoplay; encrypted-media"
-                className="rounded"
-              />
             </div>
           )}
           
@@ -122,6 +138,14 @@ export default function MusicPlayer() {
           </div>
         </div>
       </div>
+
+      <AudioPlayer
+        currentSong={currentSong}
+        playlist={playlist}
+        isPlaying={isPlaying}
+        currentPosition={currentPosition}
+        socket={socketRef.current}
+      />
     </div>
   );
 }

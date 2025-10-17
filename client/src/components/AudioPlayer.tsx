@@ -7,39 +7,36 @@ import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "re
 interface AudioPlayerProps {
   currentSong: Song | null;
   playlist: Song[];
+  isPlaying: boolean;
+  currentPosition: number;
+  socket: any;
 }
 
 export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlayerProps>(
-  ({ currentSong, playlist }, ref) => {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  ({ currentSong, playlist, isPlaying, currentPosition, socket }, ref) => {
   const [volume, setVolume] = useState(70);
   const [isMuted, setIsMuted] = useState(false);
 
-  useEffect(() => {
-    if (currentSong?.id) {
-      setIsPlaying(true);
-    }
-  }, [currentSong]);
-
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = isMuted ? 0 : volume / 100;
-    }
-  }, [volume, isMuted]);
-
   const togglePlayPause = () => {
-    setIsPlaying(!isPlaying);
+    if (socket) {
+      socket.emit('togglePlayPause');
+    }
   };
 
   useImperativeHandle(ref, () => ({
     togglePlayPause
   }));
 
-  const handleProgressChange = (value: number[]) => {
-    setCurrentTime(value[0]);
+  const handleNext = () => {
+    if (socket) {
+      socket.emit('nextSong');
+    }
+  };
+
+  const handlePrevious = () => {
+    if (socket) {
+      socket.emit('previousSong');
+    }
   };
 
   const formatTime = (time: number) => {
@@ -57,30 +54,23 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
 
   return (
     <>
-      {currentSong && (
-        <iframe
-          width="100%"
-          height="80"
-          src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&controls=1`}
-          allow="autoplay; encrypted-media"
-          allowFullScreen
-          className="rounded-lg"
-        />
-      )}
-      
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border">
         <div className="max-w-7xl mx-auto">
           <div className="px-4 py-4">
             {currentSong && (
               <iframe
+                key={currentSong.id}
                 width="100%"
                 height="80"
-                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&controls=1`}
+                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&start=${Math.floor(currentPosition)}&controls=1&enablejsapi=1`}
                 allow="autoplay; encrypted-media"
                 allowFullScreen
                 className="rounded-lg mb-4"
               />
             )}
+            <div className="text-xs text-muted-foreground text-center">
+              Playing at: {formatTime(currentPosition)} {isPlaying ? '▶' : '⏸'}
+            </div>
           </div>
 
           <div className="flex items-center justify-between px-4 pb-4">

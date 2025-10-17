@@ -68,11 +68,7 @@ app.use((req, res, next) => {
   console.log('All env vars:', process.env);
   console.log('PORT from env:', process.env.PORT);
   const port = parseInt(process.env.PORT || '6000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
   });
 })();

@@ -16,30 +16,50 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   ({ currentSong, playlist, isPlaying, currentPosition, socket }, ref) => {
   const [volume, setVolume] = useState(70);
   const [isMuted, setIsMuted] = useState(false);
-  const [iframeKey, setIframeKey] = useState(0);
   const [hasUnmuted, setHasUnmuted] = useState(false);
+  const [iframeReady, setIframeReady] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const lastCommandRef = useRef<string>('');
 
-  // Force iframe reload when song changes
+  // Wait for iframe to be ready when song changes
   useEffect(() => {
     if (currentSong) {
       console.log('AudioPlayer: Current song changed to:', currentSong.title);
-      setIframeKey(prev => prev + 1);
+      setIframeReady(false);
+      const timer = setTimeout(() => setIframeReady(true), 1000);
+      return () => clearTimeout(timer);
     }
   }, [currentSong?.id]);
+
+  // Control YouTube player based on isPlaying state
+  useEffect(() => {
+    if (iframeRef.current && hasUnmuted && iframeReady && currentSong) {
+      const command = isPlaying ? 'playVideo' : 'pauseVideo';
+      if (lastCommandRef.current !== command) {
+        lastCommandRef.current = command;
+        setTimeout(() => {
+          iframeRef.current?.contentWindow?.postMessage(
+            `{"event":"command","func":"${command}","args":""}`,
+            '*'
+          );
+        }, 100);
+      }
+    }
+  }, [isPlaying, hasUnmuted, iframeReady, currentSong?.id]);
 
   // Unmute when user interacts
   useEffect(() => {
     if (!hasUnmuted) {
       const handleFirstInteraction = () => {
         setHasUnmuted(true);
-        // Send unmute command to YouTube iframe
-        if (iframeRef.current) {
-          iframeRef.current.contentWindow?.postMessage(
-            '{"event":"command","func":"unMute","args":""}',
-            '*'
-          );
-        }
+        setTimeout(() => {
+          if (iframeRef.current) {
+            iframeRef.current.contentWindow?.postMessage(
+              '{"event":"command","func":"unMute","args":""}',
+              '*'
+            );
+          }
+        }, 200);
         document.removeEventListener('click', handleFirstInteraction);
       };
 
@@ -91,10 +111,10 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
             {currentSong && (
               <iframe
                 ref={iframeRef}
-                key={`player-${currentSong.id}-${iframeKey}`}
+                key={currentSong.id}
                 width="100%"
                 height="80"
-                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=1&mute=${hasUnmuted ? 0 : 1}&start=${Math.floor(currentPosition)}&controls=1&enablejsapi=1`}
+                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=0&mute=${hasUnmuted ? 0 : 1}&start=${Math.floor(currentPosition)}&controls=1&enablejsapi=1`}
                 allow="autoplay; encrypted-media; picture-in-picture"
                 allowFullScreen
                 className="rounded-lg mb-4"

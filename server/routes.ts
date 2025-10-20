@@ -4,6 +4,7 @@ import { Server as SocketIOServer } from "socket.io";
 import play from "play-dl";
 import ytdl from "@distube/ytdl-core";
 import { z } from "zod";
+import { storage } from "./storage";
 
 const searchQuerySchema = z.object({
   q: z.string().min(1),
@@ -18,8 +19,37 @@ let isPlaying = false;
 let playbackStartTime = 0; // When the current song started playing (server timestamp)
 let pausedAt = 0; // Position in seconds where playback was paused
 
+// Track active listeners
+const activeListeners = new Map<string, { name: string; socketId: string; userId: string }>();
+
 export async function registerRoutes(app: Express): Promise<Server> {
-  
+
+  // Get or create user by username
+  app.post("/api/user", async (req, res) => {
+    try {
+      const { username } = req.body;
+
+      if (!username || typeof username !== 'string' || username.trim().length === 0) {
+        return res.status(400).json({ error: 'Username is required' });
+      }
+
+      const trimmedUsername = username.trim().substring(0, 20);
+
+      // Check if user already exists
+      let user = await storage.getUserByUsername(trimmedUsername);
+
+      // If not, create new user
+      if (!user) {
+        user = await storage.createUser({ username: trimmedUsername });
+      }
+
+      res.json({ user });
+    } catch (error) {
+      console.error("User creation error:", error);
+      res.status(500).json({ error: "Failed to create/get user" });
+    }
+  });
+
   app.get("/api/search", async (req, res) => {
     try {
       const { q } = searchQuerySchema.parse(req.query);
@@ -178,6 +208,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       serverTime: Date.now()
     });
 
+    // Send current listeners list
+    socket.emit('listenersUpdate', {
+      listeners: Array.from(activeListeners.values()).map(l => l.name)
+    });
+
+    // Handle user joining with name and userId
+    socket.on('join', (data: { userName: string; userId: string }) => {
+      activeListeners.set(socket.id, {
+        name: data.userName,
+        socketId: socket.id,
+        userId: data.userId
+      });
+      console.log(`${data.userName} joined. Total listeners: ${activeListeners.size}`);
+
+      // Broadcast updated listeners list to all clients
+      io.emit('listenersUpdate', {
+        listeners: Array.from(activeListeners.values()).map(l => l.name)
+      });
+    });
+
     // Handle play/pause
     socket.on('togglePlayPause', () => {
       if (isPlaying) {
@@ -259,7 +309,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     socket.on('disconnect', () => {
-      console.log('User disconnected');
+      const listener = activeListeners.get(socket.id);
+      if (listener) {
+        console.log(`${listener.name} disconnected. Total listeners: ${activeListeners.size - 1}`);
+        activeListeners.delete(socket.id);
+
+        // Broadcast updated listeners list to all clients
+        io.emit('listenersUpdate', {
+          listeners: Array.from(activeListeners.values()).map(l => l.name)
+        });
+      } else {
+        console.log('User disconnected');
+      }
     });
   });
 

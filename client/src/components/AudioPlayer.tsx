@@ -9,35 +9,39 @@ interface AudioPlayerProps {
   playlist: Song[];
   isPlaying: boolean;
   currentPosition: number;
+  serverTime: number;
   socket: any;
+  roomId: string | null;
+  isPublicRoom?: boolean;
 }
 
 export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlayerProps>(
-  ({ currentSong, playlist, isPlaying, currentPosition, socket }, ref) => {
+  ({ currentSong, playlist, isPlaying, currentPosition, serverTime, socket, roomId, isPublicRoom = true }, ref) => {
   const [volume, setVolume] = useState(70);
   const [isMuted, setIsMuted] = useState(false);
-  const [hasUnmuted, setHasUnmuted] = useState(false);
+  const [hasUnmuted, setHasUnmuted] = useState(true); // Always enable audio for sync
   const [iframeReady, setIframeReady] = useState(false);
   const [localPosition, setLocalPosition] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const lastCommandRef = useRef<string>('');
   const lastSeekPositionRef = useRef<number>(-1);
   const hasTriggeredInitialPlayRef = useRef<boolean>(false);
 
-  // Sync local position with server position
+  // Sync local position with server position and calculate real-time position
   useEffect(() => {
-    setLocalPosition(currentPosition);
-  }, [currentPosition]);
-
-  // Update local position continuously when playing
-  useEffect(() => {
-    if (isPlaying) {
+    if (isPlaying && serverTime) {
       const interval = setInterval(() => {
-        setLocalPosition(prev => prev + 1);
-      }, 1000);
+        // Calculate position based on server time to avoid drift
+        const clientTime = Date.now();
+        const timeDiff = (clientTime - serverTime) / 1000;
+        setLocalPosition(Math.max(0, currentPosition + timeDiff));
+      }, 100); // Update more frequently for smoother seekbar
       return () => clearInterval(interval);
+    } else {
+      setLocalPosition(currentPosition);
     }
-  }, [isPlaying]);
+  }, [currentPosition, isPlaying, serverTime]);
 
   // Wait for iframe to be ready when song changes
   useEffect(() => {
@@ -58,53 +62,65 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
 
       setTimeout(() => {
         try {
-          // Pause
+          // First unmute to ensure audio
           iframeRef.current?.contentWindow?.postMessage(
-            '{"event":"command","func":"pauseVideo","args":""}',
+            '{"event":"command","func":"unMute","args":""}',
             '*'
           );
-
-          // Then play after a short delay
+          
+          // Then play
           setTimeout(() => {
-            try {
-              iframeRef.current?.contentWindow?.postMessage(
-                '{"event":"command","func":"playVideo","args":""}',
-                '*'
-              );
-            } catch (e) {
-              console.error('Error playing on initial trigger:', e);
-            }
-          }, 300);
+            iframeRef.current?.contentWindow?.postMessage(
+              '{"event":"command","func":"playVideo","args":""}',
+              '*'
+            );
+          }, 200);
         } catch (e) {
-          console.error('Error pausing on initial trigger:', e);
+          console.error('Error playing on initial trigger:', e);
         }
       }, 500);
     }
   }, [isPlaying, iframeReady, hasUnmuted]);
 
-  // Control volume
+  // Auto-interact and mute iframe after ready
   useEffect(() => {
-    if (iframeRef.current && hasUnmuted && iframeReady) {
+    if (iframeRef.current && iframeReady && currentSong) {
       setTimeout(() => {
+        // First interact (unmute briefly to enable API)
         iframeRef.current?.contentWindow?.postMessage(
-          `{"event":"command","func":"setVolume","args":[${volume}]}`,
+          '{"event":"command","func":"unMute","args":""}',
           '*'
         );
-      }, 100);
+        // Then immediately mute for sync-only purpose
+        setTimeout(() => {
+          iframeRef.current?.contentWindow?.postMessage(
+            '{"event":"command","func":"mute","args":""}',
+            '*'
+          );
+        }, 100);
+      }, 500);
     }
-  }, [volume, hasUnmuted, iframeReady]);
+  }, [iframeReady, currentSong?.id]);
 
-  // Control YouTube player based on isPlaying state
+  // Control YouTube player based on isPlaying state but keep muted
   useEffect(() => {
     if (iframeRef.current && hasUnmuted && iframeReady && currentSong) {
       const command = isPlaying ? 'playVideo' : 'pauseVideo';
       if (lastCommandRef.current !== command) {
         lastCommandRef.current = command;
         setTimeout(() => {
+          // Ensure muted
           iframeRef.current?.contentWindow?.postMessage(
-            `{"event":"command","func":"${command}","args":""}`,
+            '{"event":"command","func":"mute","args":""}',
             '*'
           );
+          // Then play/pause
+          setTimeout(() => {
+            iframeRef.current?.contentWindow?.postMessage(
+              `{"event":"command","func":"${command}","args":""}`,
+              '*'
+            );
+          }, 100);
         }, 100);
       }
     }
@@ -114,8 +130,10 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   useEffect(() => {
     if (iframeRef.current && hasUnmuted && iframeReady && currentSong) {
       const flooredPosition = Math.floor(currentPosition);
-      // Only seek if position changed by more than 2 seconds (indicates manual seek, not natural playback)
-      if (Math.abs(flooredPosition - lastSeekPositionRef.current) > 2) {
+      // For public rooms, sync more frequently to ensure synchronization
+      const syncThreshold = isPublicRoom ? 1 : 2;
+      
+      if (Math.abs(flooredPosition - lastSeekPositionRef.current) > syncThreshold) {
         lastSeekPositionRef.current = flooredPosition;
         setTimeout(() => {
           iframeRef.current?.contentWindow?.postMessage(
@@ -125,9 +143,30 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
         }, 100);
       }
     }
-  }, [currentPosition, hasUnmuted, iframeReady, currentSong?.id]);
+  }, [currentPosition, hasUnmuted, iframeReady, currentSong?.id, isPublicRoom]);
 
-  // Unmute when user interacts
+  // Control audio element for actual sound
+  useEffect(() => {
+    if (audioRef.current && currentSong) {
+      audioRef.current.volume = isMuted ? 0 : volume / 100;
+      
+      if (isPlaying) {
+        audioRef.current.currentTime = localPosition;
+        audioRef.current.play().catch(console.error);
+      } else {
+        audioRef.current.pause();
+      }
+    }
+  }, [isPlaying, currentSong?.id, volume, isMuted]);
+
+  // Sync audio position
+  useEffect(() => {
+    if (audioRef.current && Math.abs(audioRef.current.currentTime - localPosition) > 2) {
+      audioRef.current.currentTime = localPosition;
+    }
+  }, [localPosition]);
+
+  // Unmute when user interacts (for public rooms only if needed)
   useEffect(() => {
     if (!hasUnmuted) {
       const handleFirstInteraction = () => {
@@ -143,33 +182,6 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
                 '{"event":"command","func":"unMute","args":""}',
                 '*'
               );
-
-              // If song is already playing when user first interacts, trigger pause-play cycle
-              if (isPlaying && iframeReady) {
-                setTimeout(() => {
-                  try {
-                    // Pause
-                    iframeRef.current?.contentWindow?.postMessage(
-                      '{"event":"command","func":"pauseVideo","args":""}',
-                      '*'
-                    );
-
-                    // Then play
-                    setTimeout(() => {
-                      try {
-                        iframeRef.current?.contentWindow?.postMessage(
-                          '{"event":"command","func":"playVideo","args":""}',
-                          '*'
-                        );
-                      } catch (e) {
-                        console.error('Error playing after first interaction:', e);
-                      }
-                    }, 300);
-                  } catch (e) {
-                    console.error('Error pausing after first interaction:', e);
-                  }
-                }, 300);
-              }
             } catch (e) {
               console.error('Error unmuting on first interaction:', e);
             }
@@ -181,9 +193,12 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
       document.addEventListener('click', handleFirstInteraction);
       return () => document.removeEventListener('click', handleFirstInteraction);
     }
-  }, [hasUnmuted, isPlaying, iframeReady]);
+  }, [hasUnmuted]);
 
   const togglePlayPause = () => {
+    // Disabled for public room
+    if (isPublicRoom) return;
+    
     // Ensure user interaction is registered for autoplay
     if (!hasUnmuted) {
       setHasUnmuted(true);
@@ -202,8 +217,8 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
       }, 100);
     }
 
-    if (socket) {
-      socket.emit('togglePlayPause');
+    if (socket && roomId) {
+      socket.emit('togglePlayPause', roomId);
     }
   };
 
@@ -212,15 +227,13 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   }));
 
   const handleNext = () => {
-    if (socket) {
-      socket.emit('nextSong');
-    }
+    if (isPublicRoom || !socket || !roomId) return;
+    socket.emit('nextSong', roomId);
   };
 
   const handlePrevious = () => {
-    if (socket) {
-      socket.emit('previousSong');
-    }
+    if (isPublicRoom || !socket || !roomId) return;
+    socket.emit('previousSong', roomId);
   };
 
   const formatTime = (time: number) => {
@@ -257,6 +270,8 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   };
 
   const handleSeek = (value: number[]) => {
+    if (isPublicRoom) return; // Disabled for public room
+    
     const newPosition = value[0];
 
     // Ensure user interaction is registered for autoplay
@@ -281,8 +296,8 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
       }, 500);
     }
 
-    if (socket) {
-      socket.emit('seek', newPosition);
+    if (socket && roomId) {
+      socket.emit('seek', { position: newPosition, roomId });
 
       // Trigger pause-play cycle to ensure audio plays after seeking
       if (isPlaying && iframeRef.current && iframeReady && hasUnmuted) {
@@ -321,16 +336,24 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
         <div className="max-w-7xl mx-auto">
           <div className="px-4 py-4">
             {currentSong && (
-              <iframe
-                ref={iframeRef}
-                key={currentSong.id}
-                width="100%"
-                height="80"
-                src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=0&mute=${hasUnmuted ? 0 : 1}&start=${Math.floor(currentPosition)}&controls=1&enablejsapi=1`}
-                allow="autoplay; encrypted-media; picture-in-picture"
-                allowFullScreen
-                className="rounded-lg mb-4 hidden"
-              />
+              <>
+                <iframe
+                  ref={iframeRef}
+                  key={currentSong.id}
+                  width="100%"
+                  height="80"
+                  src={`https://www.youtube.com/embed/${currentSong.id}?autoplay=0&mute=0&start=${Math.floor(currentPosition)}&controls=1&enablejsapi=1`}
+                  allow="autoplay; encrypted-media; picture-in-picture"
+                  allowFullScreen
+                  className="rounded-lg mb-4 hidden"
+                />
+                <audio
+                  ref={audioRef}
+                  key={`audio-${currentSong.id}`}
+                  src={currentSong.audioUrl}
+                  preload="auto"
+                />
+              </>
             )}
             <div className="space-y-3 mt-2">
               <div className="flex items-center gap-3">
@@ -344,6 +367,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
                   onValueChange={handleSeek}
                   className="flex-1"
                   aria-label="Seek"
+                  disabled={isPublicRoom}
                 />
                 <span className="text-xs text-muted-foreground min-w-[40px]">
                   {currentSong.duration || "0:00"}
@@ -351,29 +375,38 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
               </div>
 
               <div className="flex items-center justify-center gap-4">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handlePrevious}
-                  disabled={!socket}
-                >
-                  <SkipBack className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={togglePlayPause}
-                  disabled={!socket}
-                >
-                  {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleNext}
-                  disabled={!socket}
-                >
-                  <SkipForward className="h-4 w-4" />
-                </Button>
+                {!isPublicRoom && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handlePrevious}
+                      disabled={!socket}
+                    >
+                      <SkipBack className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={togglePlayPause}
+                      disabled={!socket}
+                    >
+                      {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleNext}
+                      disabled={!socket}
+                    >
+                      <SkipForward className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+                {isPublicRoom && (
+                  <div className="text-sm text-muted-foreground">
+                    Auto-playing • No manual controls
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -31,6 +31,18 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
     }
   }, [currentSong?.id]);
 
+  // Control volume
+  useEffect(() => {
+    if (iframeRef.current && hasUnmuted && iframeReady) {
+      setTimeout(() => {
+        iframeRef.current?.contentWindow?.postMessage(
+          `{"event":"command","func":"setVolume","args":[${volume}]}`,
+          '*'
+        );
+      }, 100);
+    }
+  }, [volume, hasUnmuted, iframeReady]);
+
   // Control YouTube player based on isPlaying state
   useEffect(() => {
     if (iframeRef.current && hasUnmuted && iframeReady && currentSong) {
@@ -98,7 +110,18 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   };
 
   const toggleMute = () => {
-    setIsMuted(!isMuted);
+    const newMutedState = !isMuted;
+    setIsMuted(newMutedState);
+    
+    if (iframeRef.current && hasUnmuted && iframeReady) {
+      setTimeout(() => {
+        const command = newMutedState ? 'mute' : 'unMute';
+        iframeRef.current?.contentWindow?.postMessage(
+          `{"event":"command","func":"${command}","args":[]}`,
+          '*'
+        );
+      }, 100);
+    }
   };
 
   if (!currentSong) return null;
@@ -207,7 +230,15 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
                 value={[isMuted ? 0 : volume]}
                 max={100}
                 step={1}
-                onValueChange={(value) => setVolume(value[0])}
+                onValueChange={(value) => {
+                  const newVolume = value[0];
+                  setVolume(newVolume);
+                  if (newVolume === 0) {
+                    setIsMuted(true);
+                  } else if (isMuted) {
+                    setIsMuted(false);
+                  }
+                }}
                 className="w-24 md:w-32"
                 aria-label="Volume"
                 data-testid="slider-volume"

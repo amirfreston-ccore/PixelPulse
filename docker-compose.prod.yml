@@ -1,8 +1,8 @@
 services:
   backend:
-    image: your-dockerhub-username/pixelpulse-backend:latest
+    image: mubashir0409/pixelpulse-backend:latest
     ports:
-      - "5000:5000"
+      - "5000:6000"
     environment:
       - NODE_ENV=production
     networks:
@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: your-dockerhub-username/pixelpulse-frontend:latest
+    image: mubashir0409/pixelpulse-frontend:latest
     ports:
       - "80:80"
     depends_on:

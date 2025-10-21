@@ -1,23 +1,23 @@
 services:
   backend:
-    build:
-      context: .
-      dockerfile: server/Dockerfile
+    image: your-dockerhub-username/pixelpulse-backend:latest
     ports:
       - "5000:5000"
     environment:
       - NODE_ENV=production
     networks:
       - app-network
+    restart: unless-stopped
 
   frontend:
-    build: .
+    image: your-dockerhub-username/pixelpulse-frontend:latest
     ports:
       - "80:80"
     depends_on:
       - backend
     networks:
       - app-network
+    restart: unless-stopped
 
 networks:
   app-network:

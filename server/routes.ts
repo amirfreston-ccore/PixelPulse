@@ -408,30 +408,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Handle seek (only for private room creators)
-    socket.on('seek', (data: { position: number; roomId: string }) => {
-      const { position, roomId } = data;
-      const roomState = roomStates.get(roomId);
-      if (!roomState || !currentUserId) return;
+    // socket.on('seek', (data: { position: number; roomId: string }) => {
+    //   const { position, roomId } = data;
+    //   const roomState = roomStates.get(roomId);
+    //   if (!roomState || !currentUserId) return;
       
-      // Only allow creator to control private rooms
-      if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
+    //   // Only allow creator to control private rooms
+    //   if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
 
-      roomState.pausedAt = position;
-      roomState.playbackStartTime = Date.now();
+    //   roomState.pausedAt = position;
+    //   roomState.playbackStartTime = Date.now();
 
-      // Send update to all listeners with their specific isCreator status
-      const listeners = roomListeners.get(roomId);
-      if (listeners) {
-        listeners.forEach((listener) => {
-          io.to(listener.socketId).emit('playlistUpdate', {
-            ...roomState,
-            currentPosition: position,
-            serverTime: Date.now(),
-            isCreator: listener.userId === roomState.createdBy
-          });
-        });
-      }
+    //   // Send update to all listeners with their specific isCreator status
+    //   const listeners = roomListeners.get(roomId);
+    //   if (listeners) {
+    //     listeners.forEach((listener) => {
+    //       io.to(listener.socketId).emit('playlistUpdate', {
+    //         ...roomState,
+    //         currentPosition: position,
+    //         serverTime: Date.now(),
+    //         isCreator: listener.userId === roomState.createdBy
+    //       });
+    //     });
+    //   }
+    // });
+
+    socket.on('seek', (data: { position: number; roomId: string; isPlaying: boolean }) => {
+  const { position, roomId, isPlaying } = data;
+  const roomState = roomStates.get(roomId);
+  if (!roomState || !currentUserId) return;
+
+  // Only allow creator to control private rooms
+  if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
+
+  // Update room state
+  // roomState.currentPosition = position;
+  roomState.isPlaying = isPlaying;
+  // Update playbackStartTime only if playing, to maintain sync
+  if (isPlaying) {
+    roomState.playbackStartTime = Date.now();
+  } else {
+    // If paused, store position as pausedAt
+    roomState.pausedAt = position;
+  }
+
+  // Send update to all listeners with their specific isCreator status
+  const listeners = roomListeners.get(roomId);
+  if (listeners) {
+    listeners.forEach((listener) => {
+      io.to(listener.socketId).emit('playlistUpdate', {
+        ...roomState,
+        currentPosition: position,
+        isPlaying,
+        serverTime: Date.now(),
+        isCreator: listener.userId === roomState.createdBy,
+      });
     });
+  }
+});
 
     // Handle next song (only for private room creators)
     socket.on('nextSong', (roomId: string) => {
@@ -506,7 +540,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // Auto-advance songs only for public rooms (system-created) and send sync updates
+  // Auto-advance songs only for public rooms (system-created)
   setInterval(() => {
     roomStates.forEach((roomState, roomId) => {
       // Only auto-advance for public rooms (created by "system")
@@ -524,23 +558,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           roomState.currentSongIndex = (roomState.currentSongIndex + 1) % roomState.playlist.length;
           roomState.pausedAt = 0;
           roomState.playbackStartTime = Date.now();
-        }
 
-        // Send sync update to all listeners in the room
-        const listeners = roomListeners.get(roomId);
-        if (listeners) {
-          listeners.forEach((listener) => {
-            io.to(listener.socketId).emit('playlistUpdate', {
-              ...roomState,
-              currentPosition: roomState.pausedAt + ((Date.now() - roomState.playbackStartTime) / 1000),
-              serverTime: Date.now(),
-              isCreator: listener.userId === roomState.createdBy
+          // Only send update when song changes
+          const listeners = roomListeners.get(roomId);
+          if (listeners) {
+            listeners.forEach((listener) => {
+              io.to(listener.socketId).emit('playlistUpdate', {
+                ...roomState,
+                currentPosition: 0,
+                serverTime: Date.now(),
+                isCreator: listener.userId === roomState.createdBy
+              });
             });
-          });
+          }
         }
       }
     });
-  }, 1000); // Send sync updates every second for better timing accuracy
+  }, 5000); // Check every 5 seconds instead of every second
 
   return httpServer;
 }

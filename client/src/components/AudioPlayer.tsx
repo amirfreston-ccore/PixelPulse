@@ -14,339 +14,239 @@ interface AudioPlayerProps {
   socket: any;
   roomId: string | null;
   isPublicRoom?: boolean;
-  maintainPlayback?: boolean;
-  preserveAudioState?: boolean;
 }
 
 export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlayerProps>(
-  ({ currentSong, playlist, isPlaying, currentPosition, serverTime, socket, roomId, isPublicRoom = true, maintainPlayback = false, preserveAudioState = false }, ref) => {
+  ({ currentSong, playlist, isPlaying, currentPosition, serverTime, socket, roomId, isPublicRoom = true }, ref) => {
   const [volume, setVolume] = useState(70);
   const [isMuted, setIsMuted] = useState(false);
-  const [hasUnmuted, setHasUnmuted] = useState(false);
-  const [iframeReady, setIframeReady] = useState(false);
   const [localPosition, setLocalPosition] = useState(0);
+  const [audioReady, setAudioReady] = useState(false);
+  const [userActivated, setUserActivated] = useState(false);
+  const [useYouTube, setUseYouTube] = useState(true); // Start with YouTube for reliability
+  const audioRef = useRef<HTMLAudioElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const lastCommandRef = useRef<string>('');
-  const lastSeekPositionRef = useRef<number>(-1);
-  const hasTriggeredInitialPlayRef = useRef<boolean>(false);
-  const lastVolumeUpdateRef = useRef<{ muted: boolean, volume: number }>({ muted: false, volume: 70 });
-  const isSeekingRef = useRef<boolean>(false);
-  const lastPlayCommandRef = useRef<number>(0);
-  const [stableCurrentSongId, setStableCurrentSongId] = useState<string | null>(null);
 
-  // Update stable song ID only when not preserving audio state
+  // Single user activation handler
   useEffect(() => {
-    if (!preserveAudioState && currentSong) {
-      setStableCurrentSongId(currentSong.id);
-    }
-  }, [currentSong?.id, preserveAudioState]);
-
-  // Sync local position with server position and calculate real-time position
-  useEffect(() => {
-    if (isPlaying && serverTime && !preserveAudioState) {
-      const interval = setInterval(() => {
-        const clientTime = Date.now();
-        const timeDiff = (clientTime - serverTime) / 1000;
-        const newPosition = Math.max(0, currentPosition + timeDiff);
-        setLocalPosition(newPosition);
-        // Only seek if the difference is significant to avoid over-syncing
-        if (Math.abs(Math.floor(newPosition) - lastSeekPositionRef.current) > (isPublicRoom ? 1 : 2)) {
-          if (iframeRef.current && !isSeekingRef.current) {
-            lastSeekPositionRef.current = Math.floor(newPosition);
-            isSeekingRef.current = true;
-            iframeRef.current.contentWindow?.postMessage(
-              `{"event":"command","func":"seekTo","args":[${lastSeekPositionRef.current}, true]}`,
-              '*'
-            );
-            isSeekingRef.current = false;
-          }
-        }
-      }, 1000);
-      return () => clearInterval(interval);
-    } else {
-      setLocalPosition(currentPosition);
-    }
-  }, [currentPosition, isPlaying, serverTime, preserveAudioState, isPublicRoom]);
-
-  // Listen for YouTube player ready and state changes
-  useEffect(() => {
-    if (currentSong) {
-      console.log('AudioPlayer: Current song changed to:', currentSong.title);
-
-      // Don't reset iframe state if preserveAudioState is active
-      if (!preserveAudioState) {
-        setIframeReady(false);
-        hasTriggeredInitialPlayRef.current = false;
+    const activate = async () => {
+      if (userActivated) return;
+      
+      setUserActivated(true);
+      
+      // Create and play silent audio to unlock audio context
+      const silentAudio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+      try {
+        await silentAudio.play();
+        console.log('Audio context unlocked');
+      } catch (e) {
+        console.log('Silent audio failed, but continuing');
       }
+      
+      // Unmute and set volume on current audio
+      if (audioRef.current) {
+        audioRef.current.muted = false;
+        audioRef.current.volume = volume / 100;
+        console.log('Audio unmuted and volume set');
+      }
+    };
 
-      setLocalPosition(0);
+    const handleFirstInteraction = () => {
+      activate();
+      document.removeEventListener('click', handleFirstInteraction);
+      document.removeEventListener('touchstart', handleFirstInteraction);
+    };
 
-      const handleMessage = (event: MessageEvent) => {
-        if (event.origin !== 'https://www.youtube.com') return;
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-        if (data.event === 'onReady') {
-          setIframeReady(true);
-        } else if (data.event === 'onStateChange') {
-          console.log('YouTube Player State:', data.info);
-          // Stabilize playback in public rooms
-          if (isPublicRoom && isPlaying && [2, 3].includes(data.info) && Date.now() - lastPlayCommandRef.current > 1000) {
-            lastPlayCommandRef.current = Date.now();
-            iframeRef.current?.contentWindow?.postMessage(
-              '{"event":"command","func":"playVideo","args":""}',
-              '*'
-            );
-          }
-        }
-      };
-
-      window.addEventListener('message', handleMessage);
-      const timer = setTimeout(() => {
-        setIframeReady(true);
-        window.removeEventListener('message', handleMessage);
-      }, 3000);
-
-      return () => {
-        clearTimeout(timer);
-        window.removeEventListener('message', handleMessage);
-      };
-    }
-  }, [currentSong?.id, isPlaying, isPublicRoom, preserveAudioState]);
-
-  // Auto-unmute on first user interaction
-  useEffect(() => {
-    if (!hasUnmuted) {
-      const handleFirstInteraction = () => {
-        setHasUnmuted(true);
-        const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
-        audio.play().catch((e) => console.error('Silent audio play failed:', e));
-
-        setTimeout(() => {
-          if (iframeRef.current) {
-            try {
-              iframeRef.current.contentWindow?.postMessage(
-                '{"event":"command","func":"unMute","args":""}',
-                '*'
-              );
-              iframeRef.current.contentWindow?.postMessage(
-                `{"event":"command","func":"setVolume","args":[${volume}]}`,
-                '*'
-              );
-            } catch (e) {
-              console.error('Error unmuting on first interaction:', e);
-            }
-          }
-        }, 500);
-
-        document.removeEventListener('click', handleFirstInteraction);
-        document.removeEventListener('touchstart', handleFirstInteraction);
-      };
-
+    if (!userActivated) {
       document.addEventListener('click', handleFirstInteraction);
       document.addEventListener('touchstart', handleFirstInteraction);
-      return () => {
-        document.removeEventListener('click', handleFirstInteraction);
-        document.removeEventListener('touchstart', handleFirstInteraction);
-      };
     }
-  }, [hasUnmuted, volume]);
 
-  // Trigger initial play for public and private rooms
+    return () => {
+      document.removeEventListener('click', handleFirstInteraction);
+      document.removeEventListener('touchstart', handleFirstInteraction);
+    };
+  }, [userActivated, volume]);
+
+  // Handle song loading
   useEffect(() => {
-    // Skip initial play if preserveAudioState is active
-    if (preserveAudioState) return;
+    if (!currentSong || !audioRef.current) return;
 
-    if (isPlaying && iframeReady && hasUnmuted && !hasTriggeredInitialPlayRef.current && iframeRef.current) {
-      hasTriggeredInitialPlayRef.current = true;
+    const audio = audioRef.current;
+    
+    console.log('Loading new song:', currentSong.title);
+    
+    // Reset state
+    setAudioReady(false);
+    
+    // Configure audio element
+    audio.preload = 'auto';
+    audio.crossOrigin = 'anonymous';
+    
+    // Start muted for autoplay compliance
+    audio.muted = !userActivated;
+    audio.volume = userActivated ? (isMuted ? 0 : volume / 100) : 0;
+    
+    const handleCanPlay = () => {
+      console.log('Audio can play');
+      setAudioReady(true);
+      audio.currentTime = currentPosition;
+      
+      // Unmute if user has activated
+      if (userActivated && !isMuted) {
+        audio.muted = false;
+        audio.volume = volume / 100;
+      }
+    };
 
-      setTimeout(() => {
-        try {
-          iframeRef.current?.contentWindow?.postMessage(
-            `{"event":"command","func":"setVolume","args":[${volume}]}`,
-            '*'
-          );
+    const handleError = (e: any) => {
+      console.error('Audio load failed:', e);
+      console.log('Trying direct YouTube embed as fallback');
+      
+      // Create a simple YouTube embed URL for audio
+      const youtubeUrl = `https://www.youtube.com/embed/${currentSong.id}?autoplay=1&controls=0&enablejsapi=1`;
+      
+      // Create iframe fallback
+      const iframe = document.createElement('iframe');
+      iframe.src = youtubeUrl;
+      iframe.style.display = 'none';
+      iframe.allow = 'autoplay';
+      document.body.appendChild(iframe);
+      
+      setAudioReady(false);
+    };
 
-          if (!isMuted) {
-            iframeRef.current?.contentWindow?.postMessage(
-              '{"event":"command","func":"unMute","args":""}',
-              '*'
-            );
-          }
+    const handleLoadStart = () => {
+      console.log('Audio load started');
+    };
 
-          if (Date.now() - lastPlayCommandRef.current > 1000) {
-            lastPlayCommandRef.current = Date.now();
-            iframeRef.current?.contentWindow?.postMessage(
-              '{"event":"command","func":"playVideo","args":""}',
-              '*'
-            );
-          }
-        } catch (e) {
-          console.error('Error playing on initial trigger:', e);
-        }
-      }, 500);
-    }
-  }, [isPlaying, iframeReady, hasUnmuted, volume, isMuted, preserveAudioState]);
+    audio.addEventListener('canplay', handleCanPlay);
+    audio.addEventListener('error', handleError);
+    audio.addEventListener('loadstart', handleLoadStart);
+    
+    // Try to load audio directly from our endpoint
+    const audioUrl = `/api/audio/${currentSong.id}`;
+    console.log('Loading audio from:', audioUrl);
+    
+    audio.src = audioUrl;
+    audio.load();
 
-  // Control YouTube player based on isPlaying state
+    return () => {
+      audio.removeEventListener('canplay', handleCanPlay);
+      audio.removeEventListener('error', handleError);
+      audio.removeEventListener('loadstart', handleLoadStart);
+    };
+  }, [currentSong?.id, userActivated, volume, isMuted, currentPosition]);
+
+  // Handle play/pause
   useEffect(() => {
-    // Skip audio control if preserveAudioState is active
-    if (preserveAudioState) {
-      console.log('Skipping audio control due to preserveAudioState');
-      return;
-    }
-
-    if (iframeRef.current && hasUnmuted && iframeReady && currentSong) {
+    if (useYouTube && iframeRef.current && userActivated) {
       const command = isPlaying ? 'playVideo' : 'pauseVideo';
-      if (lastCommandRef.current !== command && Date.now() - lastPlayCommandRef.current > 1000) {
-        lastCommandRef.current = command;
-        lastPlayCommandRef.current = Date.now();
-
-        const timeoutId = setTimeout(() => {
-          try {
-            iframeRef.current?.contentWindow?.postMessage(
-              `{"event":"command","func":"${command}","args":""}`,
-              '*'
-            );
-
-            if (!isPlaying) {
-              setTimeout(() => {
-                if (!preserveAudioState) {
-                  iframeRef.current?.contentWindow?.postMessage(
-                    '{"event":"command","func":"mute","args":""}',
-                    '*'
-                  );
-                }
-              }, 100);
-            } else if (!isMuted) {
-              setTimeout(() => {
-                iframeRef.current?.contentWindow?.postMessage(
-                  '{"event":"command","func":"unMute","args":""}',
-                  '*'
-                );
-              }, 100);
-            }
-          } catch (e) {
-            console.error(`Error ${command}:`, e);
-          }
-        }, 100);
-
-        return () => clearTimeout(timeoutId);
-      }
-    }
-  }, [isPlaying, hasUnmuted, iframeReady, currentSong?.id, isMuted, preserveAudioState]);
-
-  // Sync YouTube player position when currentPosition changes
-  useEffect(() => {
-    // Skip position sync if preserveAudioState is active
-    if (preserveAudioState) return;
-
-    if (iframeRef.current && hasUnmuted && iframeReady && currentSong && !isSeekingRef.current) {
-      const flooredPosition = Math.floor(currentPosition);
-      const syncThreshold = isPublicRoom ? 3 : 5;
-
-      if (Math.abs(flooredPosition - lastSeekPositionRef.current) > syncThreshold) {
-        lastSeekPositionRef.current = flooredPosition;
-        isSeekingRef.current = true;
-
-        try {
-          iframeRef.current?.contentWindow?.postMessage(
-            `{"event":"command","func":"seekTo","args":[${flooredPosition}, true]}`,
-            '*'
-          );
-
-          setTimeout(() => {
-            iframeRef.current?.contentWindow?.postMessage(
-              `{"event":"command","func":"setVolume","args":[${volume}]}`,
-              '*'
-            );
-
-            if (!isMuted) {
-              iframeRef.current?.contentWindow?.postMessage(
-                '{"event":"command","func":"unMute","args":""}',
-                '*'
-              );
-            }
-
-            if (isPlaying && Date.now() - lastPlayCommandRef.current > 1000) {
-              lastPlayCommandRef.current = Date.now();
-              iframeRef.current?.contentWindow?.postMessage(
-                '{"event":"command","func":"playVideo","args":""}',
-                '*'
-              );
-            }
-
-            isSeekingRef.current = false;
-          }, 300);
-        } catch (e) {
-          console.error('Error during seek:', e);
-          isSeekingRef.current = false;
+      iframeRef.current.contentWindow?.postMessage(
+        `{"event":"command","func":"${command}","args":""}`,
+        '*'
+      );
+    } else if (!useYouTube && audioRef.current && audioReady) {
+      if (isPlaying) {
+        const playPromise = audioRef.current.play();
+        if (playPromise) {
+          playPromise
+            .then(() => {
+              console.log('Playback started');
+              if (userActivated && !isMuted) {
+                audioRef.current!.muted = false;
+                audioRef.current!.volume = volume / 100;
+              }
+            })
+            .catch((error) => {
+              console.error('Play failed:', error);
+            });
         }
+      } else {
+        audioRef.current.pause();
       }
     }
-  }, [currentPosition, hasUnmuted, iframeReady, currentSong?.id, isPublicRoom, isPlaying, isMuted, volume, preserveAudioState]);
+  }, [isPlaying, audioReady, userActivated, isMuted, volume, useYouTube]);
 
-  // Control YouTube iframe volume
+  // Handle volume changes
   useEffect(() => {
-    // Skip volume control if preserveAudioState is active
-    if (preserveAudioState) return;
+    if (!audioRef.current || !userActivated) return;
+    
+    const audio = audioRef.current;
+    audio.muted = isMuted;
+    audio.volume = isMuted ? 0 : volume / 100;
+  }, [volume, isMuted, userActivated]);
 
-    if (iframeRef.current && hasUnmuted && iframeReady && !isSeekingRef.current) {
-      if (lastVolumeUpdateRef.current.muted === isMuted &&
-          lastVolumeUpdateRef.current.volume === volume) {
-        return;
+  // Update position from YouTube iframe
+  useEffect(() => {
+    if (!useYouTube || !currentSong) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== 'https://www.youtube.com') return;
+      
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (data.event === 'onStateChange') {
+          console.log('YouTube state:', data.info);
+        }
+      } catch (e) {
+        // Ignore parsing errors
       }
+    };
 
-      lastVolumeUpdateRef.current = { muted: isMuted, volume };
+    // Get current time from YouTube player
+    const updatePosition = () => {
+      if (iframeRef.current && userActivated) {
+        iframeRef.current.contentWindow?.postMessage(
+          '{"event":"command","func":"getCurrentTime","args":""}',
+          '*'
+        );
+      }
+    };
 
-      const timeoutId = setTimeout(() => {
-        if (isMuted) {
-          iframeRef.current?.contentWindow?.postMessage(
-            '{"event":"command","func":"mute","args":""}',
-            '*'
-          );
+    const interval = setInterval(updatePosition, 1000);
+    window.addEventListener('message', handleMessage);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [useYouTube, currentSong, userActivated]);
+
+  // Update local position in real-time
+  useEffect(() => {
+    if (useYouTube) {
+      // For YouTube, sync with server position
+      const interval = setInterval(() => {
+        if (isPlaying && serverTime) {
+          const clientTime = Date.now();
+          const timeDiff = (clientTime - serverTime) / 1000;
+          const newPosition = Math.max(0, currentPosition + timeDiff);
+          setLocalPosition(newPosition);
         } else {
-          iframeRef.current?.contentWindow?.postMessage(
-            '{"event":"command","func":"unMute","args":""}',
-            '*'
-          );
-          setTimeout(() => {
-            iframeRef.current?.contentWindow?.postMessage(
-              `{"event":"command","func":"setVolume","args":[${volume}]}`,
-              '*'
-            );
-          }, 100);
+          setLocalPosition(currentPosition);
         }
-      }, 150);
-
-      return () => clearTimeout(timeoutId);
+      }, 100);
+      return () => clearInterval(interval);
+    } else {
+      // For HTML5 audio
+      const interval = setInterval(() => {
+        if (audioRef.current && isPlaying && audioReady) {
+          setLocalPosition(audioRef.current.currentTime);
+        }
+      }, 100);
+      return () => clearInterval(interval);
     }
-  }, [isMuted, volume, hasUnmuted, iframeReady, preserveAudioState]);
+  }, [isPlaying, audioReady, useYouTube, currentPosition, serverTime]);
 
   const togglePlayPause = () => {
     if (isPublicRoom) return;
-
-    if (!hasUnmuted) {
-      setHasUnmuted(true);
-      const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
-      audio.play().catch(() => {});
-
-      setTimeout(() => {
-        if (iframeRef.current) {
-          iframeRef.current.contentWindow?.postMessage(
-            '{"event":"command","func":"unMute","args":""}',
-            '*'
-          );
-        }
-      }, 100);
-    }
-
     if (socket && roomId) {
       socket.emit('togglePlayPause', roomId);
     }
   };
 
-  useImperativeHandle(ref, () => ({
-    togglePlayPause
-  }));
+  useImperativeHandle(ref, () => ({ togglePlayPause }));
 
   const handleNext = () => {
     if (isPublicRoom || !socket || !roomId) return;
@@ -376,37 +276,23 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
     return 0;
   };
 
-  const toggleMute = () => {
-    setIsMuted(!isMuted);
-  };
-
   const handleSeek = (value: number[]) => {
     if (isPublicRoom) return;
-
     const newPosition = value[0];
-
-    if (!hasUnmuted) {
-      setHasUnmuted(true);
-      const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
-      audio.play().catch(() => {});
-
-      setTimeout(() => {
-        if (iframeRef.current) {
-          try {
-            iframeRef.current.contentWindow?.postMessage(
-              '{"event":"command","func":"unMute","args":""}',
-              '*'
-            );
-          } catch (e) {
-            console.error('Error unmuting iframe:', e);
-          }
-        }
-      }, 500);
+    
+    if (useYouTube && iframeRef.current && userActivated) {
+      iframeRef.current.contentWindow?.postMessage(
+        `{"event":"command","func":"seekTo","args":[${newPosition}, true]}`,
+        '*'
+      );
+    } else if (!useYouTube && audioRef.current) {
+      audioRef.current.currentTime = newPosition;
     }
-
+    
+    setLocalPosition(newPosition);
+    
     if (socket && roomId) {
       socket.emit('seek', { position: newPosition, roomId, isPlaying });
-      setLocalPosition(newPosition);
     }
   };
 
@@ -414,20 +300,20 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border">
+      {useYouTube && currentSong ? (
+        <iframe
+          ref={iframeRef}
+          width="100%"
+          height="80"
+          src={`https://www.youtube.com/embed/${currentSong.id}?enablejsapi=1&controls=0&autoplay=${userActivated ? 1 : 0}&start=${Math.floor(currentPosition)}`}
+          allow="autoplay; encrypted-media"
+          className="hidden"
+        />
+      ) : (
+        <audio ref={audioRef} />
+      )}
       <div className="max-w-7xl mx-auto">
         <div className="px-4 py-4">
-          {currentSong && (
-            <iframe
-              ref={iframeRef}
-              key={stableCurrentSongId || currentSong.id}
-              width="100%"
-              height="80"
-              src={`https://www.youtube.com/embed/${currentSong.id}?enablejsapi=1&controls=0&start=${Math.floor(currentPosition)}`}
-              allow="autoplay; encrypted-media; picture-in-picture"
-              allowFullScreen
-              className="rounded-lg mb-4 hidden"
-            />
-          )}
           <div className="space-y-3 mt-2">
             <div className="flex items-center gap-3">
               <span className="text-xs text-muted-foreground min-w-[40px] hidden sm:block">
@@ -439,7 +325,6 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
                 step={1}
                 onValueChange={handleSeek}
                 className="flex-1"
-                aria-label="Seek"
                 disabled={isPublicRoom}
               />
               <span className="text-xs text-muted-foreground min-w-[40px] hidden sm:block">
@@ -448,39 +333,23 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
             </div>
 
             <div className="flex items-center justify-center gap-4">
-              {!isPublicRoom && (
+              {!userActivated && (
+                <div className="text-sm text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20 px-3 py-2 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                  🔊 Click anywhere to enable audio
+                </div>
+              )}
+              {!isPublicRoom && userActivated && (
                 <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handlePrevious}
-                    disabled={!socket}
-                    className="hidden sm:flex"
-                  >
+                  <Button size="sm" variant="outline" onClick={handlePrevious} className="hidden sm:flex">
                     <SkipBack className="h-4 w-4" />
                   </Button>
-                  <Button
-                    size="sm"
-                    onClick={togglePlayPause}
-                    disabled={!socket}
-                  >
+                  <Button size="sm" onClick={togglePlayPause}>
                     {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleNext}
-                    disabled={!socket}
-                    className="hidden sm:flex"
-                  >
+                  <Button size="sm" variant="outline" onClick={handleNext} className="hidden sm:flex">
                     <SkipForward className="h-4 w-4" />
                   </Button>
                 </>
-              )}
-              {isPublicRoom && (
-                <div className="text-sm text-muted-foreground">
-                  Auto-playing • No manual controls
-                </div>
               )}
             </div>
           </div>
@@ -490,12 +359,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="h-12 w-12 rounded-lg bg-muted overflow-hidden flex-shrink-0">
               {currentSong.thumbnail ? (
-                <img
-                  src={currentSong.thumbnail}
-                  alt={currentSong.title}
-                  className="w-full h-full object-cover"
-                  data-testid="img-now-playing"
-                />
+                <img src={currentSong.thumbnail} alt={currentSong.title} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-muted to-accent">
                   <Music className="h-5 w-5 text-muted-foreground" />
@@ -503,56 +367,29 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="font-medium truncate text-sm" data-testid="text-now-playing-title">
-                {currentSong.title}
-              </p>
-              <p className="text-xs text-muted-foreground truncate" data-testid="text-now-playing-artist">
-                {currentSong.artist}
-              </p>
-              <div className="flex items-center gap-2 sm:hidden">
-                <span className="text-xs text-muted-foreground">
-                  {formatTime(localPosition)}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  / {currentSong.duration || "0:00"}
-                </span>
-              </div>
+              <p className="font-medium truncate text-sm">{currentSong.title}</p>
+              <p className="text-xs text-muted-foreground truncate">{currentSong.artist}</p>
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-3">
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={toggleMute}
-              className="h-8 w-8"
-              data-testid="button-mute"
-              aria-label={isMuted ? "Unmute" : "Mute"}
-            >
-              {isMuted ? (
-                <VolumeX className="h-4 w-4" />
-              ) : (
-                <Volume2 className="h-4 w-4" />
-              )}
-            </Button>
-            <Slider
-              value={[isMuted ? 0 : volume]}
-              max={100}
-              step={1}
-              onValueChange={(value) => {
-                const newVolume = value[0];
-                setVolume(newVolume);
-                if (newVolume === 0) {
-                  setIsMuted(true);
-                } else if (isMuted) {
-                  setIsMuted(false);
-                }
-              }}
-              className="w-24 md:w-32"
-              aria-label="Volume"
-              data-testid="slider-volume"
-            />
-          </div>
+          {userActivated && (
+            <div className="hidden md:flex items-center gap-3">
+              <Button size="icon" variant="ghost" onClick={() => setIsMuted(!isMuted)} className="h-8 w-8">
+                {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              </Button>
+              <Slider
+                value={[isMuted ? 0 : volume]}
+                max={100}
+                step={1}
+                onValueChange={(value) => {
+                  const newVolume = value[0];
+                  setVolume(newVolume);
+                  setIsMuted(newVolume === 0);
+                }}
+                className="w-24 md:w-32"
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

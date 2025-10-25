@@ -189,6 +189,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/audio/:videoId", async (req, res) => {
+    try {
+      const { videoId } = req.params;
+      console.log('Streaming audio for:', videoId);
+      
+      const info = await ytdl.getInfo(videoId, { agent });
+      const audioFormats = info.formats.filter(format => 
+        format.hasAudio && !format.hasVideo && format.url
+      );
+      
+      if (audioFormats.length === 0) {
+        console.log('No audio-only formats, trying any audio format');
+        const anyAudioFormat = info.formats.find(format => format.hasAudio && format.url);
+        if (anyAudioFormat) {
+          return res.redirect(anyAudioFormat.url);
+        }
+        return res.status(404).json({ error: 'No audio format found' });
+      }
+      
+      // Get best audio quality
+      const bestAudio = audioFormats.reduce((best, current) => 
+        (current.audioBitrate || 0) > (best.audioBitrate || 0) ? current : best
+      );
+      
+      // Set proper headers for audio streaming
+      res.setHeader('Content-Type', bestAudio.mimeType || 'audio/webm');
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', 'Range');
+      
+      console.log('Redirecting to audio URL:', bestAudio.url);
+      res.redirect(bestAudio.url);
+    } catch (error) {
+      console.error('Audio streaming error:', error);
+      res.status(500).json({ error: 'Failed to stream audio' });
+    }
+  });
+
   app.get("/api/stream/:videoId", async (req, res) => {
     try {
       const { videoId } = req.params;

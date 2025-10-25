@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 interface Room {
@@ -12,12 +12,14 @@ interface RoomSelectionProps {
   userName: string;
   userId: string;
   onRoomSelect: (roomId: string, isCreator: boolean) => void;
+  onClose?: () => void;
 }
 
-export function RoomSelection({ userName, userId, onRoomSelect }: RoomSelectionProps) {
+export function RoomSelection({ userName, userId, onRoomSelect, onClose }: RoomSelectionProps) {
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [roomName, setRoomName] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   const { data: roomsData, refetch } = useQuery<{ rooms: Room[] }>({
     queryKey: ['/api/rooms'],
@@ -25,6 +27,17 @@ export function RoomSelection({ userName, userId, onRoomSelect }: RoomSelectionP
   });
 
   const rooms = roomsData?.rooms || [];
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+        onClose?.();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onClose]);
 
   const handleCreateRoom = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +61,7 @@ export function RoomSelection({ userName, userId, onRoomSelect }: RoomSelectionP
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full shadow-2xl">
+      <div ref={modalRef} className="bg-card border border-border rounded-xl p-6 max-w-md w-full shadow-2xl">
         <h2 className="text-2xl font-bold mb-2">Welcome, {userName}!</h2>
         <p className="text-muted-foreground mb-6">Choose a room to join or create your own</p>
 

@@ -10,6 +10,11 @@ import { RoomSelection } from "@/components/RoomSelection";
 import { Song, SearchResult } from "@shared/schema";
 import { io, Socket } from "socket.io-client";
 import { useToast } from "@/hooks/use-toast";
+import { TiArrowShuffle } from "react-icons/ti";
+import { SlLoop } from "react-icons/sl";
+import { IoIosChatboxes } from "react-icons/io";
+import { MdOutlinePublic } from "react-icons/md";
+import { FaExchangeAlt } from "react-icons/fa";
 
 export default function MusicPlayer() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -26,10 +31,20 @@ export default function MusicPlayer() {
   const [showRoomSelection, setShowRoomSelection] = useState(false);
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
   const [isCreator, setIsCreator] = useState(false);
-  const [songVotes, setSongVotes] = useState<Record<string, { votes: number; required: number; hasVoted: boolean }>>({});
+  const [songVotes, setSongVotes] = useState<
+    Record<string, { votes: number; required: number; hasVoted: boolean }>
+  >({});
   const [isShuffled, setIsShuffled] = useState(false);
   const [isLooped, setIsLooped] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ id: string; userId: string; userName: string; message: string; timestamp: number }>>([]);
+  const [chatMessages, setChatMessages] = useState<
+    Array<{
+      id: string;
+      userId: string;
+      userName: string;
+      message: string;
+      timestamp: number;
+    }>
+  >([]);
   const [showChat, setShowChat] = useState(false);
   const [newMessage, setNewMessage] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
@@ -39,26 +54,32 @@ export default function MusicPlayer() {
 
   const currentSong = playlist[currentSongIndex] || null;
 
-  const { data: searchResults, isLoading, error } = useQuery<SearchResult>({
+  const {
+    data: searchResults,
+    isLoading,
+    error,
+  } = useQuery<SearchResult>({
     queryKey: [`/api/search?q=${encodeURIComponent(searchQuery)}`],
     enabled: searchQuery.length > 0,
   });
 
   // Check for stored user data on mount
   useEffect(() => {
-    const storedUserId = localStorage.getItem('userId');
-    const storedUserName = localStorage.getItem('userName');
-    
+    const storedUserId = localStorage.getItem("userId");
+    const storedUserName = localStorage.getItem("userName");
+
     if (storedUserId && storedUserName) {
       setUserId(storedUserId);
       setUserName(storedUserName);
       setShowNamePrompt(false);
-      
+
       // Auto-join public room
-      fetch('/api/rooms')
-        .then(res => res.json())
-        .then(data => {
-          const publicRoom = data.rooms.find((room: any) => room.name === "Public Room");
+      fetch("/api/rooms")
+        .then((res) => res.json())
+        .then((data) => {
+          const publicRoom = data.rooms.find(
+            (room: any) => room.name === "Public Room"
+          );
           if (publicRoom) {
             setCurrentRoomId(publicRoom.id);
             setShowRoomSelection(false);
@@ -75,21 +96,21 @@ export default function MusicPlayer() {
       const socket = io();
       socketRef.current = socket;
 
-      socket.on('playlistUpdate', (data) => {
-        console.log('Playlist update received:', {
+      socket.on("playlistUpdate", (data) => {
+        console.log("Playlist update received:", {
           currentSongIndex: data.currentSongIndex,
           isPlaying: data.isPlaying,
           currentSong: data.playlist[data.currentSongIndex]?.title,
-          preserveAudioState: data.preserveAudioState
+          preserveAudioState: data.preserveAudioState,
         });
 
         // Only preserve audio state if the current song is actually changing
         const newCurrentSong = data.playlist[data.currentSongIndex];
         const currentSongChanged = currentSong?.id !== newCurrentSong?.id;
-        
+
         // Set preserveAudioState ONLY for song changes, not playlist reordering
         if (data.preserveAudioState && currentSongChanged) {
-          console.log('Setting preserveAudioState to true - song changed');
+          console.log("Setting preserveAudioState to true - song changed");
           setPreserveAudioState(true);
         }
 
@@ -104,7 +125,7 @@ export default function MusicPlayer() {
         // Reset preserveAudioState after a short delay to allow normal audio control
         if (data.preserveAudioState && currentSongChanged) {
           setTimeout(() => {
-            console.log('Resetting preserveAudioState to false');
+            console.log("Resetting preserveAudioState to false");
             setPreserveAudioState(false);
           }, 100);
         }
@@ -113,60 +134,64 @@ export default function MusicPlayer() {
         if (data.currentPosition !== undefined) {
           setCurrentPosition(data.currentPosition);
         } else if (data.isPlaying && data.playbackStartTime) {
-          const serverElapsed = (data.serverTime - data.playbackStartTime) / 1000;
+          const serverElapsed =
+            (data.serverTime - data.playbackStartTime) / 1000;
           setCurrentPosition(data.pausedAt + serverElapsed);
         } else {
           setCurrentPosition(data.pausedAt || 0);
         }
       });
 
-      socket.on('listenersUpdate', (data) => {
-        console.log('Listeners update:', data.listeners);
+      socket.on("listenersUpdate", (data) => {
+        console.log("Listeners update:", data.listeners);
         setListeners(data.listeners);
       });
 
-      socket.on('voteUpdate', (data) => {
-        setSongVotes(prev => ({
+      socket.on("voteUpdate", (data) => {
+        setSongVotes((prev) => ({
           ...prev,
           [data.songId]: {
             votes: data.votes,
             required: data.required,
-            hasVoted: data.hasVoted
-          }
+            hasVoted: data.hasVoted,
+          },
         }));
       });
 
-      socket.on('newMessage', (message) => {
-        setChatMessages(prev => [...prev, message]);
-        
+      socket.on("newMessage", (message) => {
+        setChatMessages((prev) => [...prev, message]);
+
         // Show toast if chat is closed and message is from another user
         if (!showChat && message.userId !== userId) {
-          setUnreadCount(prev => prev + 1);
+          setUnreadCount((prev) => prev + 1);
           toast({
             title: `💬 ${message.userName}`,
-            description: message.message.length > 50 ? message.message.substring(0, 50) + "..." : message.message,
+            description:
+              message.message.length > 50
+                ? message.message.substring(0, 50) + "..."
+                : message.message,
           });
         }
       });
 
-      socket.on('chatHistory', (messages) => {
+      socket.on("chatHistory", (messages) => {
         setChatMessages(messages);
       });
 
-      socket.on('error', (data) => {
-        console.error('Socket error:', data.message);
+      socket.on("error", (data) => {
+        console.error("Socket error:", data.message);
         // You could show a toast notification here
       });
 
       // Join the room
-      socket.emit('joinRoom', {
+      socket.emit("joinRoom", {
         roomId: currentRoomId,
         userName,
-        userId
+        userId,
       });
 
       // Request chat history
-      socket.emit('getChatHistory', currentRoomId);
+      socket.emit("getChatHistory", currentRoomId);
 
       return () => socket.disconnect();
     }
@@ -178,58 +203,62 @@ export default function MusicPlayer() {
 
   const handleVoteSong = (songId: string) => {
     if (!currentRoomId || !socketRef.current) return;
-    
-    socketRef.current.emit('voteSong', {
+
+    socketRef.current.emit("voteSong", {
       songId,
-      roomId: currentRoomId
+      roomId: currentRoomId,
     });
   };
 
   const handleAddToPlaylist = async (song: Song) => {
     if (!currentRoomId || !socketRef.current) return;
 
-    socketRef.current.emit('addToPlaylist', {
+    socketRef.current.emit("addToPlaylist", {
       song: {
         ...song,
-        addedBy: userName
+        addedBy: userName,
       },
-      roomId: currentRoomId
+      roomId: currentRoomId,
     });
 
     // Clear search results on mobile to show playlist
     if (window.innerWidth < 1024) {
-      setSearchQuery('');
+      setSearchQuery("");
     }
   };
 
   const handleToggleShuffle = () => {
     if (!currentRoomId || !socketRef.current) return;
-    socketRef.current.emit('toggleShuffle', currentRoomId);
+    socketRef.current.emit("toggleShuffle", currentRoomId);
   };
 
   const handleToggleLoop = () => {
     if (!currentRoomId || !socketRef.current) return;
-    socketRef.current.emit('toggleLoop', currentRoomId);
+    socketRef.current.emit("toggleLoop", currentRoomId);
   };
 
   const handleReorderSongs = (fromIndex: number, toIndex: number) => {
     if (!currentRoomId || !socketRef.current) return;
-    console.log('Reordering songs:', { fromIndex, toIndex, roomId: currentRoomId });
-    socketRef.current.emit('reorderSongs', {
+    console.log("Reordering songs:", {
+      fromIndex,
+      toIndex,
+      roomId: currentRoomId,
+    });
+    socketRef.current.emit("reorderSongs", {
       roomId: currentRoomId,
       fromIndex,
-      toIndex
+      toIndex,
     });
   };
 
   const handleSendMessage = () => {
     if (!currentRoomId || !socketRef.current || !newMessage.trim()) return;
-    
-    socketRef.current.emit('sendMessage', {
+
+    socketRef.current.emit("sendMessage", {
       roomId: currentRoomId,
-      message: newMessage.trim()
+      message: newMessage.trim(),
     });
-    
+
     setNewMessage("");
   };
 
@@ -239,12 +268,14 @@ export default function MusicPlayer() {
     setHasUserInteracted(true);
     // Play a silent audio to unlock autoplay with proper volume
     try {
-      const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+      const audio = new Audio(
+        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="
+      );
       audio.volume = 0.01;
       await audio.play();
-      console.log('Audio context unlocked successfully');
+      console.log("Audio context unlocked successfully");
     } catch (e) {
-      console.log('Audio unlock failed:', e);
+      console.log("Audio unlock failed:", e);
     }
   };
 
@@ -252,10 +283,10 @@ export default function MusicPlayer() {
     if (name.trim()) {
       try {
         // Create or get user from database
-        const response = await fetch('/api/user', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: name.trim() })
+        const response = await fetch("/api/user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: name.trim() }),
         });
 
         const data = await response.json();
@@ -266,14 +297,16 @@ export default function MusicPlayer() {
           setShowNamePrompt(false);
 
           // Store user data in localStorage for persistence
-          localStorage.setItem('userId', data.user.id);
-          localStorage.setItem('userName', data.user.username);
+          localStorage.setItem("userId", data.user.id);
+          localStorage.setItem("userName", data.user.username);
 
           // Auto-join public room
-          const roomsResponse = await fetch('/api/rooms');
+          const roomsResponse = await fetch("/api/rooms");
           const roomsData = await roomsResponse.json();
-          const publicRoom = roomsData.rooms.find((room: any) => room.name === "Public Room");
-          
+          const publicRoom = roomsData.rooms.find(
+            (room: any) => room.name === "Public Room"
+          );
+
           if (publicRoom) {
             setCurrentRoomId(publicRoom.id);
             setShowRoomSelection(false);
@@ -282,13 +315,13 @@ export default function MusicPlayer() {
           }
         }
       } catch (error) {
-        console.error('Failed to create/get user:', error);
+        console.error("Failed to create/get user:", error);
       }
     }
   };
 
   const handleRoomSelect = (roomId: string, roomIsCreator: boolean) => {
-    console.log('Room selected:', { roomId, roomIsCreator, userId });
+    console.log("Room selected:", { roomId, roomIsCreator, userId });
     setCurrentRoomId(roomId);
     setIsCreator(roomIsCreator);
     setShowRoomSelection(false);
@@ -311,12 +344,18 @@ export default function MusicPlayer() {
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
         <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
           <h2 className="text-2xl font-bold mb-2">Join PixelPulse</h2>
-          <p className="text-muted-foreground mb-4">Enter your name to get started</p>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const input = e.currentTarget.elements.namedItem('userName') as HTMLInputElement;
-            handleJoinWithName(input.value);
-          }}>
+          <p className="text-muted-foreground mb-4">
+            Enter your name to get started
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const input = e.currentTarget.elements.namedItem(
+                "userName"
+              ) as HTMLInputElement;
+              handleJoinWithName(input.value);
+            }}
+          >
             <input
               type="text"
               name="userName"
@@ -343,6 +382,7 @@ export default function MusicPlayer() {
         userName={userName}
         userId={userId}
         onRoomSelect={handleRoomSelect}
+        onClose={() => setShowRoomSelection(false)}
       />
     );
   }
@@ -352,30 +392,37 @@ export default function MusicPlayer() {
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between p-4 border-b gap-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 flex-1">
           <SearchBar onSearch={handleSearch} isLoading={isLoading} />
-          <div className="text-sm text-muted-foreground">
-            {isCreator ? '🎮 Private Room • You control the player' : '🌍 Public Room • Everyone can add songs'}
+          <div className="text-sm text-muted-foreground flex items-center gap-1">
+            {isCreator ? (
+              <>🎮 Private Room • You control the player</>
+            ) : (
+              <>
+                <MdOutlinePublic /> Public Room • Everyone can add songs
+              </>
+            )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 ">
           <button
             onClick={handleToggleShuffle}
-            className={`px-3 py-2 rounded-lg text-sm transition-colors ${
-              isShuffled 
-                ? 'bg-primary text-primary-foreground' 
-                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+              isShuffled
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
             }`}
           >
-            🔀 Shuffle
+            <TiArrowShuffle />
+            <span> Shuffle</span>
           </button>
           <button
             onClick={handleToggleLoop}
-            className={`px-3 py-2 rounded-lg text-sm transition-colors ${
-              isLooped 
-                ? 'bg-primary text-primary-foreground' 
-                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            className={`flex gap-2 items-center px-3 py-2 rounded-lg text-sm transition-colors ${
+              isLooped
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
             }`}
           >
-            🔁 Loop
+            <SlLoop /> Loop
           </button>
           <button
             onClick={() => {
@@ -384,20 +431,24 @@ export default function MusicPlayer() {
                 setUnreadCount(0);
               }
             }}
-            className="px-3 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors relative"
+            className="flex items-center gap-2 px-3 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors relative"
           >
-            💬 Chat
+            <IoIosChatboxes /> Chat
             {unreadCount > 0 && (
               <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                {unreadCount > 9 ? '9+' : unreadCount}
+                {unreadCount > 9 ? "9+" : unreadCount}
               </span>
             )}
           </button>
+
           <button
             onClick={() => setShowRoomSelection(true)}
-            className="px-3 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors"
+            className="px-3  py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors flex items-center  gap-2 justify-end"
           >
-            Switch Room
+            <FaExchangeAlt />
+
+            {/* Text hidden on mobile, shown on sm and above */}
+            <span className="hidden sm:inline">Switch Room</span>
           </button>
         </div>
       </div>
@@ -405,7 +456,11 @@ export default function MusicPlayer() {
       {/* Main Content */}
       <div className="flex flex-col lg:flex-row h-[calc(100vh-140px)]">
         {/* Search Results - Mobile: Full width, Desktop: Sidebar */}
-        <div className={`${songs.length > 0 ? 'block' : 'hidden lg:block'} lg:w-96 border-r bg-card/30 flex flex-col`}>
+        <div
+          className={`${
+            songs.length > 0 ? "block" : "hidden lg:block"
+          } lg:w-96 border-r bg-card/30 flex flex-col`}
+        >
           <div className="p-4 border-b">
             <h2 className="text-lg font-semibold">Search Results</h2>
           </div>
@@ -415,13 +470,24 @@ export default function MusicPlayer() {
             ) : songs.length > 0 ? (
               <div className="space-y-2">
                 {songs.map((song) => (
-                  <div key={song.id} className="flex items-center gap-3 p-3 bg-card rounded-lg border hover:bg-accent/50">
-                    <img src={song.thumbnail} alt={song.title} className="w-12 h-12 rounded object-cover flex-shrink-0" />
+                  <div
+                    key={song.id}
+                    className="flex items-center gap-3 p-3 bg-card rounded-lg border hover:bg-accent/50"
+                  >
+                    <img
+                      src={song.thumbnail}
+                      alt={song.title}
+                      className="w-12 h-12 rounded object-cover flex-shrink-0"
+                    />
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate text-sm">{song.title}</p>
-                      <p className="text-xs text-muted-foreground truncate">{song.artist}</p>
+                      <p className="font-medium truncate text-sm">
+                        {song.title}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {song.artist}
+                      </p>
                     </div>
-                    <button 
+                    <button
                       onClick={() => handleAddToPlaylist(song)}
                       className="px-2 py-1 bg-primary text-primary-foreground rounded text-xs flex-shrink-0"
                     >
@@ -437,7 +503,11 @@ export default function MusicPlayer() {
         </div>
 
         {/* Playlist Section */}
-        <div className={`${songs.length > 0 ? 'hidden lg:flex' : 'flex'} flex-1 ${showChat ? 'lg:w-auto' : 'lg:w-auto'} border-r bg-card/20 flex-col`}>
+        <div
+          className={`${songs.length > 0 ? "hidden lg:flex" : "flex"} flex-1 ${
+            showChat ? "lg:w-auto" : "lg:w-auto"
+          } border-r bg-card/20 flex-col`}
+        >
           <div className="p-4 border-b">
             <h2 className="text-lg font-semibold">
               Playlist ({playlist.length})
@@ -451,11 +521,16 @@ export default function MusicPlayer() {
               <div className="mb-4 p-3 bg-primary/10 rounded-lg border border-primary/20">
                 <p className="text-sm font-medium mb-2 flex items-center gap-2">
                   <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                  {listeners.length} {listeners.length === 1 ? 'person is' : 'people are'} listening
+                  {listeners.length}{" "}
+                  {listeners.length === 1 ? "person is" : "people are"}{" "}
+                  listening
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {listeners.map((listener, index) => (
-                    <span key={index} className="px-2 py-1 bg-primary/20 text-xs rounded-full">
+                    <span
+                      key={index}
+                      className="px-2 py-1 bg-primary/20 text-xs rounded-full"
+                    >
                       {listener}
                     </span>
                   ))}
@@ -465,25 +540,38 @@ export default function MusicPlayer() {
 
             {currentSong && (
               <div className="mb-4 p-3 bg-accent rounded-lg">
-                <p className="text-sm text-muted-foreground mb-1">Now Playing</p>
+                <p className="text-sm text-muted-foreground mb-1">
+                  Now Playing
+                </p>
                 <div className="flex items-center gap-3">
-                  <img src={currentSong.thumbnail} alt={currentSong.title} className="w-16 h-16 rounded object-cover" />
+                  <img
+                    src={currentSong.thumbnail}
+                    alt={currentSong.title}
+                    className="w-16 h-16 rounded object-cover"
+                  />
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate">{currentSong.title}</p>
-                    <p className="text-sm text-muted-foreground truncate">{currentSong.artist}</p>
+                    <p className="text-sm text-muted-foreground truncate">
+                      {currentSong.artist}
+                    </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {Math.floor(currentPosition)}s / {currentSong.duration} {isPlaying ? '▶' : '⏸'}
+                      {Math.floor(currentPosition)}s / {currentSong.duration}{" "}
+                      {isPlaying ? "▶" : "⏸"}
                     </p>
                   </div>
                 </div>
               </div>
             )}
-            
+
             <div className="space-y-2">
               {playlist.map((song, index) => {
                 const isCurrentSong = currentSong?.id === song.id;
-                const voteData = songVotes[song.id] || { votes: 0, required: 1, hasVoted: false };
-                
+                const voteData = songVotes[song.id] || {
+                  votes: 0,
+                  required: 1,
+                  hasVoted: false,
+                };
+
                 return (
                   <PlaylistCard
                     key={`${song.id}-${index}`}
@@ -507,7 +595,11 @@ export default function MusicPlayer() {
         </div>
 
         {/* Chat Section */}
-        <div className={`${showChat ? 'lg:w-80' : 'lg:w-80'} border-l bg-card/50 flex flex-col transition-all duration-300`}>
+        <div
+          className={`${
+            showChat ? "lg:w-80" : "lg:w-80"
+          } border-l bg-card/50 flex flex-col transition-all duration-300`}
+        >
           {showChat ? (
             <div className="flex flex-col h-full">
               <div className="p-4 border-b">
@@ -517,7 +609,9 @@ export default function MusicPlayer() {
                 {chatMessages.map((msg) => (
                   <div key={msg.id} className="bg-muted/50 rounded-lg p-2">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-sm">{msg.userName}</span>
+                      <span className="font-medium text-sm">
+                        {msg.userName}
+                      </span>
                       <span className="text-xs text-muted-foreground">
                         {new Date(msg.timestamp).toLocaleTimeString()}
                       </span>
@@ -532,7 +626,7 @@ export default function MusicPlayer() {
                     type="text"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                    onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
                     placeholder="Type a message..."
                     className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm"
                     maxLength={500}

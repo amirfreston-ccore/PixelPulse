@@ -10,12 +10,10 @@ TAG="latest"
 echo "Building and pushing Docker images..."
 
 # Build and push backend
-docker build -f server/Dockerfile -t $DOCKER_USERNAME/$IMAGE_NAME-backend:$TAG .
-docker push $DOCKER_USERNAME/$IMAGE_NAME-backend:$TAG
+docker buildx build --platform linux/amd64 -f server/Dockerfile -t $DOCKER_USERNAME/$IMAGE_NAME-backend:$TAG . --push
 
 # Build and push frontend
-docker build -t $DOCKER_USERNAME/$IMAGE_NAME-frontend:$TAG .
-docker push $DOCKER_USERNAME/$IMAGE_NAME-frontend:$TAG
+docker buildx build --platform linux/amd64 -t $DOCKER_USERNAME/$IMAGE_NAME-frontend:$TAG . --push
 
 echo "Images pushed to Docker Hub successfully!"
 echo ""

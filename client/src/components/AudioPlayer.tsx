@@ -1,5 +1,4 @@
 
-
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Music } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -15,10 +14,12 @@ interface AudioPlayerProps {
   socket: any;
   roomId: string | null;
   isPublicRoom?: boolean;
+  maintainPlayback?: boolean;
+  preserveAudioState?: boolean;
 }
 
 export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlayerProps>(
-  ({ currentSong, playlist, isPlaying, currentPosition, serverTime, socket, roomId, isPublicRoom = true }, ref) => {
+  ({ currentSong, playlist, isPlaying, currentPosition, serverTime, socket, roomId, isPublicRoom = true, maintainPlayback = false, preserveAudioState = false }, ref) => {
   const [volume, setVolume] = useState(70);
   const [isMuted, setIsMuted] = useState(false);
   const [hasUnmuted, setHasUnmuted] = useState(false);
@@ -30,12 +31,19 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   const hasTriggeredInitialPlayRef = useRef<boolean>(false);
   const lastVolumeUpdateRef = useRef<{ muted: boolean, volume: number }>({ muted: false, volume: 70 });
   const isSeekingRef = useRef<boolean>(false);
-  // const lastPlayCommandRef = useRef<number>(0);
-  const lastPlayCommandRef = useRef<number>(0); // To debounce play commands
+  const lastPlayCommandRef = useRef<number>(0);
+  const [stableCurrentSongId, setStableCurrentSongId] = useState<string | null>(null);
+
+  // Update stable song ID only when not preserving audio state
+  useEffect(() => {
+    if (!preserveAudioState && currentSong) {
+      setStableCurrentSongId(currentSong.id);
+    }
+  }, [currentSong?.id, preserveAudioState]);
 
   // Sync local position with server position and calculate real-time position
   useEffect(() => {
-    if (isPlaying && serverTime) {
+    if (isPlaying && serverTime && !preserveAudioState) {
       const interval = setInterval(() => {
         const clientTime = Date.now();
         const timeDiff = (clientTime - serverTime) / 1000;
@@ -53,19 +61,24 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
             isSeekingRef.current = false;
           }
         }
-      }, 1000); // Increased interval to 1 second to reduce frequency
+      }, 1000);
       return () => clearInterval(interval);
     } else {
       setLocalPosition(currentPosition);
     }
-  }, [currentPosition, isPlaying, serverTime]);
+  }, [currentPosition, isPlaying, serverTime, preserveAudioState, isPublicRoom]);
 
   // Listen for YouTube player ready and state changes
   useEffect(() => {
     if (currentSong) {
       console.log('AudioPlayer: Current song changed to:', currentSong.title);
-      setIframeReady(false);
-      hasTriggeredInitialPlayRef.current = false;
+
+      // Don't reset iframe state if preserveAudioState is active
+      if (!preserveAudioState) {
+        setIframeReady(false);
+        hasTriggeredInitialPlayRef.current = false;
+      }
+
       setLocalPosition(0);
 
       const handleMessage = (event: MessageEvent) => {
@@ -74,7 +87,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
         if (data.event === 'onReady') {
           setIframeReady(true);
         } else if (data.event === 'onStateChange') {
-          console.log('YouTube Player State:', data.info); // -1: unstarted, 1: playing, 2: paused, 3: buffering
+          console.log('YouTube Player State:', data.info);
           // Stabilize playback in public rooms
           if (isPublicRoom && isPlaying && [2, 3].includes(data.info) && Date.now() - lastPlayCommandRef.current > 1000) {
             lastPlayCommandRef.current = Date.now();
@@ -88,7 +101,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
 
       window.addEventListener('message', handleMessage);
       const timer = setTimeout(() => {
-        setIframeReady(true); // Fallback
+        setIframeReady(true);
         window.removeEventListener('message', handleMessage);
       }, 3000);
 
@@ -97,7 +110,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
         window.removeEventListener('message', handleMessage);
       };
     }
-  }, [currentSong?.id, isPlaying, isPublicRoom]);
+  }, [currentSong?.id, isPlaying, isPublicRoom, preserveAudioState]);
 
   // Auto-unmute on first user interaction
   useEffect(() => {
@@ -139,6 +152,9 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
 
   // Trigger initial play for public and private rooms
   useEffect(() => {
+    // Skip initial play if preserveAudioState is active
+    if (preserveAudioState) return;
+
     if (isPlaying && iframeReady && hasUnmuted && !hasTriggeredInitialPlayRef.current && iframeRef.current) {
       hasTriggeredInitialPlayRef.current = true;
 
@@ -168,10 +184,16 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
         }
       }, 500);
     }
-  }, [isPlaying, iframeReady, hasUnmuted, volume, isMuted]);
+  }, [isPlaying, iframeReady, hasUnmuted, volume, isMuted, preserveAudioState]);
 
   // Control YouTube player based on isPlaying state
   useEffect(() => {
+    // Skip audio control if preserveAudioState is active
+    if (preserveAudioState) {
+      console.log('Skipping audio control due to preserveAudioState');
+      return;
+    }
+
     if (iframeRef.current && hasUnmuted && iframeReady && currentSong) {
       const command = isPlaying ? 'playVideo' : 'pauseVideo';
       if (lastCommandRef.current !== command && Date.now() - lastPlayCommandRef.current > 1000) {
@@ -187,10 +209,12 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
 
             if (!isPlaying) {
               setTimeout(() => {
-                iframeRef.current?.contentWindow?.postMessage(
-                  '{"event":"command","func":"mute","args":""}',
-                  '*'
-                );
+                if (!preserveAudioState) {
+                  iframeRef.current?.contentWindow?.postMessage(
+                    '{"event":"command","func":"mute","args":""}',
+                    '*'
+                  );
+                }
               }, 100);
             } else if (!isMuted) {
               setTimeout(() => {
@@ -208,10 +232,13 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
         return () => clearTimeout(timeoutId);
       }
     }
-  }, [isPlaying, hasUnmuted, iframeReady, currentSong?.id, isMuted]);
+  }, [isPlaying, hasUnmuted, iframeReady, currentSong?.id, isMuted, preserveAudioState]);
 
   // Sync YouTube player position when currentPosition changes
   useEffect(() => {
+    // Skip position sync if preserveAudioState is active
+    if (preserveAudioState) return;
+
     if (iframeRef.current && hasUnmuted && iframeReady && currentSong && !isSeekingRef.current) {
       const flooredPosition = Math.floor(currentPosition);
       const syncThreshold = isPublicRoom ? 3 : 5;
@@ -255,12 +282,15 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
         }
       }
     }
-  }, [currentPosition, hasUnmuted, iframeReady, currentSong?.id, isPublicRoom, isPlaying, isMuted, volume]);
+  }, [currentPosition, hasUnmuted, iframeReady, currentSong?.id, isPublicRoom, isPlaying, isMuted, volume, preserveAudioState]);
 
   // Control YouTube iframe volume
   useEffect(() => {
+    // Skip volume control if preserveAudioState is active
+    if (preserveAudioState) return;
+
     if (iframeRef.current && hasUnmuted && iframeReady && !isSeekingRef.current) {
-      if (lastVolumeUpdateRef.current.muted === isMuted && 
+      if (lastVolumeUpdateRef.current.muted === isMuted &&
           lastVolumeUpdateRef.current.volume === volume) {
         return;
       }
@@ -289,7 +319,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
 
       return () => clearTimeout(timeoutId);
     }
-  }, [isMuted, volume, hasUnmuted, iframeReady]);
+  }, [isMuted, volume, hasUnmuted, iframeReady, preserveAudioState]);
 
   const togglePlayPause = () => {
     if (isPublicRoom) return;
@@ -389,7 +419,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
           {currentSong && (
             <iframe
               ref={iframeRef}
-              key={currentSong.id}
+              key={stableCurrentSongId || currentSong.id}
               width="100%"
               height="80"
               src={`https://www.youtube.com/embed/${currentSong.id}?enablejsapi=1&controls=0&start=${Math.floor(currentPosition)}`}
@@ -400,7 +430,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
           )}
           <div className="space-y-3 mt-2">
             <div className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground min-w-[40px]">
+              <span className="text-xs text-muted-foreground min-w-[40px] hidden sm:block">
                 {formatTime(localPosition)}
               </span>
               <Slider
@@ -412,7 +442,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
                 aria-label="Seek"
                 disabled={isPublicRoom}
               />
-              <span className="text-xs text-muted-foreground min-w-[40px]">
+              <span className="text-xs text-muted-foreground min-w-[40px] hidden sm:block">
                 {currentSong.duration || "0:00"}
               </span>
             </div>
@@ -425,6 +455,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
                     variant="outline"
                     onClick={handlePrevious}
                     disabled={!socket}
+                    className="hidden sm:flex"
                   >
                     <SkipBack className="h-4 w-4" />
                   </Button>
@@ -440,6 +471,7 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
                     variant="outline"
                     onClick={handleNext}
                     disabled={!socket}
+                    className="hidden sm:flex"
                   >
                     <SkipForward className="h-4 w-4" />
                   </Button>
@@ -477,6 +509,14 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
               <p className="text-xs text-muted-foreground truncate" data-testid="text-now-playing-artist">
                 {currentSong.artist}
               </p>
+              <div className="flex items-center gap-2 sm:hidden">
+                <span className="text-xs text-muted-foreground">
+                  {formatTime(localPosition)}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  / {currentSong.duration || "0:00"}
+                </span>
+              </div>
             </div>
           </div>
 

@@ -20,6 +20,9 @@ const roomStates = new Map<string, {
   playbackStartTime: number;
   pausedAt: number;
   createdBy: string;
+  isShuffled: boolean;
+  isLooped: boolean;
+  originalPlaylist: any[];
 }>();
 
 // Track active listeners per room
@@ -27,6 +30,9 @@ const roomListeners = new Map<string, Map<string, { name: string; socketId: stri
 
 // Track votes per song per room
 const songVotes = new Map<string, Map<string, Set<string>>>();
+
+// Track chat messages per room
+const roomMessages = new Map<string, Array<{ id: string; userId: string; userName: string; message: string; timestamp: number }>>();
 
 export async function registerRoutes(app: Express): Promise<Server> {
 
@@ -37,7 +43,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!publicRoom) {
         publicRoom = await storage.createRoom({ name: "Public Room", createdBy: "system" });
       }
-      
+
       // Initialize room state
       if (!roomStates.has(publicRoom.id)) {
         roomStates.set(publicRoom.id, {
@@ -46,12 +52,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           isPlaying: false,
           playbackStartTime: 0,
           pausedAt: 0,
-          createdBy: "system"
+          createdBy: "system",
+          isShuffled: false,
+          isLooped: false,
+          originalPlaylist: []
         });
         roomListeners.set(publicRoom.id, new Map());
         songVotes.set(publicRoom.id, new Map());
+        roomMessages.set(publicRoom.id, []);
       }
-      
+
       return publicRoom.id;
     } catch (error) {
       console.error("Failed to initialize public room:", error);
@@ -111,11 +121,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isPlaying: false,
         playbackStartTime: 0,
         pausedAt: 0,
-        createdBy
+        createdBy,
+        isShuffled: false,
+        isLooped: false,
+        originalPlaylist: []
       });
 
       roomListeners.set(room.id, new Map());
       songVotes.set(room.id, new Map());
+      roomMessages.set(room.id, []);
 
       res.json({ room });
     } catch (error) {
@@ -179,41 +193,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { videoId } = req.params;
       const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      
+
       const info = await ytdl.getInfo(videoUrl, {
         agent,
       });
-      
+
       const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
-      
+
       if (audioFormats.length === 0) {
         res.status(404).json({ error: 'No audio format found' });
         return;
       }
-      
+
       const audioStream = ytdl(videoUrl, {
         quality: 'highestaudio',
         filter: 'audioonly',
         agent,
       });
-      
+
       res.setHeader('Content-Type', 'audio/webm');
       res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Access-Control-Allow-Origin', '*');
-      
+
       audioStream.pipe(res);
-      
+
       audioStream.on('error', (error) => {
         console.error('Stream error:', error);
         if (!res.headersSent) {
           res.status(500).json({ error: 'Streaming failed' });
         }
       });
-      
+
       req.on('close', () => {
         audioStream.destroy();
       });
-      
+
     } catch (error) {
       console.error("Stream error:", error);
       if (!res.headersSent) {
@@ -287,10 +301,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     socket.on('addToPlaylist', (data: { song: any; roomId: string }) => {
       const { song, roomId } = data;
       const roomState = roomStates.get(roomId);
-      
+
       if (!roomState) return;
 
+      // Check for duplicates
+      const isDuplicate = roomState.playlist.some(existingSong => existingSong.id === song.id);
+      if (isDuplicate) {
+        socket.emit('error', { message: 'Song already in playlist' });
+        return;
+      }
+
       roomState.playlist.push(song);
+      roomState.originalPlaylist.push(song);
 
       // Initialize votes for this song
       if (!songVotes.has(roomId)) {
@@ -313,7 +335,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           io.to(listener.socketId).emit('playlistUpdate', {
             ...roomState,
             serverTime: Date.now(),
-            isCreator: listener.userId === roomState.createdBy
+            isCreator: listener.userId === roomState.createdBy,
+            // Prevent audio interruption during playlist modifications
+            preserveAudioState: true
           });
         });
       }
@@ -380,12 +404,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     socket.on('togglePlayPause', (roomId: string) => {
       const roomState = roomStates.get(roomId);
       if (!roomState || !currentUserId) return;
-      
+
       // Only allow creator to control private rooms
       if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
 
       roomState.isPlaying = !roomState.isPlaying;
-      
+
       if (roomState.isPlaying) {
         roomState.playbackStartTime = Date.now();
       } else {
@@ -412,7 +436,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     //   const { position, roomId } = data;
     //   const roomState = roomStates.get(roomId);
     //   if (!roomState || !currentUserId) return;
-      
+
     //   // Only allow creator to control private rooms
     //   if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
 
@@ -434,49 +458,212 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // });
 
     socket.on('seek', (data: { position: number; roomId: string; isPlaying: boolean }) => {
-  const { position, roomId, isPlaying } = data;
-  const roomState = roomStates.get(roomId);
-  if (!roomState || !currentUserId) return;
+      const { position, roomId, isPlaying } = data;
+      const roomState = roomStates.get(roomId);
+      if (!roomState || !currentUserId) return;
 
-  // Only allow creator to control private rooms
-  if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
+      // Only allow creator to control private rooms
+      if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
 
-  // Update room state
-  // roomState.currentPosition = position;
-  roomState.isPlaying = isPlaying;
-  // Update playbackStartTime only if playing, to maintain sync
-  if (isPlaying) {
-    roomState.playbackStartTime = Date.now();
-  } else {
-    // If paused, store position as pausedAt
-    roomState.pausedAt = position;
-  }
+      roomState.isPlaying = isPlaying;
+      roomState.pausedAt = position;
+      if (isPlaying) {
+        roomState.playbackStartTime = Date.now();
+      }
 
-  // Send update to all listeners with their specific isCreator status
-  const listeners = roomListeners.get(roomId);
-  if (listeners) {
-    listeners.forEach((listener) => {
-      io.to(listener.socketId).emit('playlistUpdate', {
-        ...roomState,
-        currentPosition: position,
-        isPlaying,
-        serverTime: Date.now(),
-        isCreator: listener.userId === roomState.createdBy,
-      });
+      // Send update to all listeners with their specific isCreator status
+      const listeners = roomListeners.get(roomId);
+      if (listeners) {
+        listeners.forEach((listener) => {
+          io.to(listener.socketId).emit('playlistUpdate', {
+            ...roomState,
+            currentPosition: position,
+            isPlaying,
+            serverTime: Date.now(),
+            isCreator: listener.userId === roomState.createdBy,
+          });
+        });
+      }
     });
-  }
-});
+
+    // Handle shuffle toggle
+    socket.on('toggleShuffle', (roomId: string) => {
+      const roomState = roomStates.get(roomId);
+      if (!roomState || !currentUserId) return;
+
+      // Only allow creator to control private rooms, but allow anyone in public rooms
+      if (roomState.createdBy !== "system" && roomState.createdBy !== currentUserId) return;
+
+      roomState.isShuffled = !roomState.isShuffled;
+
+      if (roomState.isShuffled) {
+        // Shuffle the playlist
+        const currentSong = roomState.playlist[roomState.currentSongIndex];
+        const shuffled = [...roomState.playlist];
+
+        // Fisher-Yates shuffle
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+
+        roomState.playlist = shuffled;
+        roomState.currentSongIndex = shuffled.findIndex(song => song.id === currentSong?.id) || 0;
+      } else {
+        // Restore original order
+        const currentSong = roomState.playlist[roomState.currentSongIndex];
+        roomState.playlist = [...roomState.originalPlaylist];
+        roomState.currentSongIndex = roomState.playlist.findIndex(song => song.id === currentSong?.id) || 0;
+      }
+
+      // Send update to all listeners
+      const listeners = roomListeners.get(roomId);
+      if (listeners) {
+        listeners.forEach((listener) => {
+          io.to(listener.socketId).emit('playlistUpdate', {
+            ...roomState,
+            serverTime: Date.now(),
+            isCreator: listener.userId === roomState.createdBy
+          });
+        });
+      }
+    });
+
+    // Handle loop toggle
+    socket.on('toggleLoop', (roomId: string) => {
+      const roomState = roomStates.get(roomId);
+      if (!roomState || !currentUserId) return;
+
+      // Only allow creator to control private rooms, but allow anyone in public rooms
+      if (roomState.createdBy !== "system" && roomState.createdBy !== currentUserId) return;
+
+      roomState.isLooped = !roomState.isLooped;
+
+      // Send update to all listeners
+      const listeners = roomListeners.get(roomId);
+      if (listeners) {
+        listeners.forEach((listener) => {
+          io.to(listener.socketId).emit('playlistUpdate', {
+            ...roomState,
+            serverTime: Date.now(),
+            isCreator: listener.userId === roomState.createdBy
+          });
+        });
+      }
+    });
+
+    // Handle song reordering
+    socket.on('reorderSongs', (data: { roomId: string; fromIndex: number; toIndex: number }) => {
+      const { roomId, fromIndex, toIndex } = data;
+      console.log('Server reorder request:', { roomId, fromIndex, toIndex });
+
+      const roomState = roomStates.get(roomId);
+      if (!roomState || !currentUserId) {
+        console.log('Reorder failed: no room state or user ID');
+        return;
+      }
+
+      // Only allow creator to control private rooms, but allow anyone in public rooms
+      if (roomState.createdBy !== "system" && roomState.createdBy !== currentUserId) {
+        console.log('Reorder failed: permission denied');
+        return;
+      }
+
+      console.log('Before reorder:', roomState.playlist.map(s => s.title));
+
+      const playlist = [...roomState.playlist];
+
+      // Simple reorder logic
+      if (fromIndex >= 0 && fromIndex < playlist.length && toIndex >= 0 && toIndex < playlist.length) {
+        const [movedSong] = playlist.splice(fromIndex, 1);
+        playlist.splice(toIndex, 0, movedSong);
+
+        roomState.playlist = playlist;
+
+        // Update original playlist too
+        roomState.originalPlaylist = [...playlist];
+
+        // Adjust current song index
+        if (roomState.currentSongIndex === fromIndex) {
+          roomState.currentSongIndex = toIndex;
+        } else if (fromIndex < roomState.currentSongIndex && toIndex >= roomState.currentSongIndex) {
+          roomState.currentSongIndex--;
+        } else if (fromIndex > roomState.currentSongIndex && toIndex <= roomState.currentSongIndex) {
+          roomState.currentSongIndex++;
+        }
+
+        console.log('After reorder:', roomState.playlist.map(s => s.title));
+
+        // Send update to all listeners
+        const listeners = roomListeners.get(roomId);
+        if (listeners) {
+          listeners.forEach((listener) => {
+            io.to(listener.socketId).emit('playlistUpdate', {
+              ...roomState,
+              serverTime: Date.now(),
+              isCreator: listener.userId === roomState.createdBy,
+              // Prevent audio interruption during reordering
+              preserveAudioState: true
+            });
+          });
+        }
+      } else {
+        console.log('Reorder failed: invalid indices');
+      }
+    });
+
+    // Handle chat messages
+    socket.on('sendMessage', (data: { roomId: string; message: string }) => {
+      const { roomId, message } = data;
+      if (!currentUserId || !currentRoomId || !message.trim()) return;
+
+      const listener = roomListeners.get(roomId)?.get(socket.id);
+      if (!listener) return;
+
+      const chatMessage = {
+        id: Date.now().toString(),
+        userId: currentUserId,
+        userName: listener.name,
+        message: message.trim().substring(0, 500), // Limit message length
+        timestamp: Date.now()
+      };
+
+      // Add to room messages
+      if (!roomMessages.has(roomId)) {
+        roomMessages.set(roomId, []);
+      }
+      const messages = roomMessages.get(roomId)!;
+      messages.push(chatMessage);
+
+      // Keep only last 100 messages
+      if (messages.length > 100) {
+        messages.splice(0, messages.length - 100);
+      }
+
+      // Send to all listeners in the room
+      io.to(roomId).emit('newMessage', chatMessage);
+    });
+
+    // Send chat history when user joins
+    socket.on('getChatHistory', (roomId: string) => {
+      const messages = roomMessages.get(roomId) || [];
+      socket.emit('chatHistory', messages);
+    });
 
     // Handle next song (only for private room creators)
     socket.on('nextSong', (roomId: string) => {
       const roomState = roomStates.get(roomId);
       if (!roomState || !currentUserId) return;
-      
+
       // Only allow creator to control private rooms
       if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
 
       if (roomState.playlist.length > 0) {
-        roomState.currentSongIndex = (roomState.currentSongIndex + 1) % roomState.playlist.length;
+        if (roomState.isLooped && roomState.currentSongIndex === roomState.playlist.length - 1) {
+          roomState.currentSongIndex = 0; // Loop back to first song
+        } else {
+          roomState.currentSongIndex = (roomState.currentSongIndex + 1) % roomState.playlist.length;
+        }
         roomState.pausedAt = 0;
         roomState.playbackStartTime = Date.now();
 
@@ -498,13 +685,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     socket.on('previousSong', (roomId: string) => {
       const roomState = roomStates.get(roomId);
       if (!roomState || !currentUserId) return;
-      
+
       // Only allow creator to control private rooms
       if (roomState.createdBy !== currentUserId || roomState.createdBy === "system") return;
 
       if (roomState.playlist.length > 0) {
-        roomState.currentSongIndex = roomState.currentSongIndex > 0 
-          ? roomState.currentSongIndex - 1 
+        roomState.currentSongIndex = roomState.currentSongIndex > 0
+          ? roomState.currentSongIndex - 1
           : roomState.playlist.length - 1;
         roomState.pausedAt = 0;
         roomState.playbackStartTime = Date.now();
@@ -527,7 +714,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (currentRoomId && roomListeners.has(currentRoomId)) {
         const roomListener = roomListeners.get(currentRoomId)!;
         const listener = roomListener.get(socket.id);
-        
+
         if (listener) {
           console.log(`${listener.name} disconnected from room ${currentRoomId}`);
           roomListener.delete(socket.id);
@@ -535,6 +722,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Send updated listeners to room
           const listeners = Array.from(roomListener.values()).map(l => l.name);
           io.to(currentRoomId).emit('listenersUpdate', { listeners });
+
+          // Auto-delete room if empty and not the public room
+          const roomState = roomStates.get(currentRoomId);
+          if (roomListener.size === 0 && roomState && roomState.createdBy !== "system") {
+            console.log(`Deleting empty room: ${currentRoomId}`);
+            roomStates.delete(currentRoomId);
+            roomListeners.delete(currentRoomId);
+            songVotes.delete(currentRoomId);
+            roomMessages.delete(currentRoomId);
+
+            // Optionally delete from database
+            storage.deleteRoom(currentRoomId).catch(err =>
+              console.error('Failed to delete room from database:', err)
+            );
+          }
         }
       }
     });
@@ -545,7 +747,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     roomStates.forEach((roomState, roomId) => {
       // Only auto-advance for public rooms (created by "system")
       if (roomState.createdBy !== "system") return;
-      
+
       if (roomState.isPlaying && roomState.playlist.length > 0 && roomState.playlist[roomState.currentSongIndex]) {
         const currentSong = roomState.playlist[roomState.currentSongIndex];
         const durationParts = currentSong.duration?.split(':') || ['3', '0'];
@@ -554,7 +756,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const currentPosition = roomState.pausedAt + (elapsedMs / 1000);
 
         if (currentPosition >= durationSeconds) {
-          // Auto-advance to next song (loop)
+          // Auto-advance to next song (always loop for public rooms)
           roomState.currentSongIndex = (roomState.currentSongIndex + 1) % roomState.playlist.length;
           roomState.pausedAt = 0;
           roomState.playbackStartTime = Date.now();

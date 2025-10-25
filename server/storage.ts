@@ -9,6 +9,7 @@ export interface IStorage {
   getRoomByName(name: string): Promise<Room | undefined>;
   createRoom(room: InsertRoom): Promise<Room>;
   getAllRooms(): Promise<Room[]>;
+  deleteRoom(id: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -56,6 +57,10 @@ export class MemStorage implements IStorage {
 
   async getAllRooms(): Promise<Room[]> {
     return Array.from(this.rooms.values());
+  }
+
+  async deleteRoom(id: string): Promise<boolean> {
+    return this.rooms.delete(id);
   }
 }
 

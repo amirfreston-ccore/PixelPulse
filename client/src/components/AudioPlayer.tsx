@@ -21,6 +21,8 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   const [position, setPosition] = useState(0);
   const [userClicked, setUserClicked] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const lastSyncRef = useRef<number>(0);
+  const lastVolumeRef = useRef<number>(70);
 
   // Handle user click
   useEffect(() => {
@@ -50,16 +52,39 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
   useEffect(() => {
     setPosition(0);
     
-    // Sync YouTube player to correct position when song changes
+    // Only sync on song change, not during playback
     if (iframeRef.current && userClicked && currentPosition > 0) {
       setTimeout(() => {
         iframeRef.current?.contentWindow?.postMessage(
           `{"event":"command","func":"seekTo","args":[${currentPosition}, true]}`,
           '*'
         );
-      }, 1000); // Wait for iframe to load
+        // Set volume once after song change
+        iframeRef.current?.contentWindow?.postMessage(
+          `{"event":"command","func":"setVolume","args":[${lastVolumeRef.current}]}`,
+          '*'
+        );
+      }, 2000); // Longer wait for iframe stability
     }
   }, [currentSong?.id, currentPosition, userClicked]);
+
+  // Handle volume changes (debounced)
+  useEffect(() => {
+    if (!iframeRef.current || !userClicked) return;
+    
+    const actualVolume = isMuted ? 0 : volume;
+    lastVolumeRef.current = actualVolume;
+    
+    // Debounce volume changes to prevent audio issues
+    const timeout = setTimeout(() => {
+      iframeRef.current?.contentWindow?.postMessage(
+        `{"event":"command","func":"setVolume","args":[${actualVolume}]}`,
+        '*'
+      );
+    }, 300);
+    
+    return () => clearTimeout(timeout);
+  }, [volume, isMuted, userClicked]);
 
   // YouTube controls and sync
   useEffect(() => {
@@ -71,14 +96,21 @@ export const AudioPlayer = forwardRef<{ togglePlayPause: () => void }, AudioPlay
       '*'
     );
 
-    // Sync position every 3 seconds to keep all users aligned
+    // Sync position only when needed (reduce frequency to prevent skips)
     if (isPlaying) {
       const syncInterval = setInterval(() => {
-        iframeRef.current?.contentWindow?.postMessage(
-          `{"event":"command","func":"seekTo","args":[${position}, true]}`,
-          '*'
-        );
-      }, 3000);
+        const now = Date.now();
+        const timeSinceLastSync = now - lastSyncRef.current;
+        
+        // Only sync if position difference is significant (>3 seconds) and enough time passed
+        if (timeSinceLastSync > 5000 && Math.abs(position - lastSyncRef.current / 1000) > 3) {
+          lastSyncRef.current = now;
+          iframeRef.current?.contentWindow?.postMessage(
+            `{"event":"command","func":"seekTo","args":[${position}, true]}`,
+            '*'
+          );
+        }
+      }, 5000); // Reduced frequency
       return () => clearInterval(syncInterval);
     }
   }, [isPlaying, userClicked, position]);

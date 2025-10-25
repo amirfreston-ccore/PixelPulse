@@ -1,0 +1,24 @@
+services:
+  backend:
+    image: mubashir0409/pixelpulse-backend:latest
+    ports:
+      - "5000:6000"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  frontend:
+    image: mubashir0409/pixelpulse-frontend:latest
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge

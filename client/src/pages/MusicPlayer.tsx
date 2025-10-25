@@ -3,8 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { SearchBar } from "@/components/SearchBar";
 import { MusicCard } from "@/components/MusicCard";
 import { AudioPlayer } from "@/components/AudioPlayer";
+import { PlaylistCard } from "@/components/PlaylistCard";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingState } from "@/components/LoadingState";
+import { RoomSelection } from "@/components/RoomSelection";
 import { Song, SearchResult } from "@shared/schema";
 import { io, Socket } from "socket.io-client";
 
@@ -18,9 +20,13 @@ export default function MusicPlayer() {
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [listeners, setListeners] = useState<string[]>([]);
   const [userName, setUserName] = useState("");
+  const [userId, setUserId] = useState("");
   const [showNamePrompt, setShowNamePrompt] = useState(true);
+  const [showRoomSelection, setShowRoomSelection] = useState(false);
+  const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
+  const [isCreator, setIsCreator] = useState(false);
+  const [songVotes, setSongVotes] = useState<Record<string, { votes: number; required: number; hasVoted: boolean }>>({});
   const socketRef = useRef<Socket | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const currentSong = playlist[currentSongIndex] || null;
 
@@ -29,67 +35,126 @@ export default function MusicPlayer() {
     enabled: searchQuery.length > 0,
   });
 
+  // Check for stored user data on mount
   useEffect(() => {
-    const socket = io();
-    socketRef.current = socket;
+    const storedUserId = localStorage.getItem('userId');
+    const storedUserName = localStorage.getItem('userName');
+    
+    if (storedUserId && storedUserName) {
+      setUserId(storedUserId);
+      setUserName(storedUserName);
+      setShowNamePrompt(false);
+      
+      // Auto-join public room
+      fetch('/api/rooms')
+        .then(res => res.json())
+        .then(data => {
+          const publicRoom = data.rooms.find((room: any) => room.name === "Public Room");
+          if (publicRoom) {
+            setCurrentRoomId(publicRoom.id);
+            setShowRoomSelection(false);
+          } else {
+            setShowRoomSelection(true);
+          }
+        })
+        .catch(() => setShowRoomSelection(true));
+    }
+  }, []);
 
-    socket.on('playlistUpdate', (data) => {
-      console.log('Playlist update received:', {
-        currentSongIndex: data.currentSongIndex,
-        isPlaying: data.isPlaying,
-        currentSong: data.playlist[data.currentSongIndex]?.title
+  useEffect(() => {
+    if (currentRoomId) {
+      const socket = io();
+      socketRef.current = socket;
+
+      socket.on('playlistUpdate', (data) => {
+        console.log('Playlist update received:', {
+          currentSongIndex: data.currentSongIndex,
+          isPlaying: data.isPlaying,
+          currentSong: data.playlist[data.currentSongIndex]?.title
+        });
+
+        setPlaylist(data.playlist);
+        setCurrentSongIndex(data.currentSongIndex);
+        setIsPlaying(data.isPlaying);
+        setServerTime(data.serverTime);
+        setIsCreator(data.isCreator);
+
+        // Calculate accurate position using server time
+        if (data.currentPosition !== undefined) {
+          setCurrentPosition(data.currentPosition);
+        } else if (data.isPlaying && data.playbackStartTime) {
+          const serverElapsed = (data.serverTime - data.playbackStartTime) / 1000;
+          setCurrentPosition(data.pausedAt + serverElapsed);
+        } else {
+          setCurrentPosition(data.pausedAt || 0);
+        }
       });
 
-      setPlaylist(data.playlist);
-      setCurrentSongIndex(data.currentSongIndex);
-      setIsPlaying(data.isPlaying);
-      setServerTime(data.serverTime);
+      socket.on('listenersUpdate', (data) => {
+        console.log('Listeners update:', data.listeners);
+        setListeners(data.listeners);
+      });
 
-      // Calculate accurate position
-      if (data.currentPosition !== undefined) {
-        setCurrentPosition(data.currentPosition);
-      } else if (data.isPlaying && data.playbackStartTime) {
-        const elapsed = Date.now() - data.playbackStartTime;
-        setCurrentPosition(data.pausedAt + elapsed / 1000);
-      } else {
-        setCurrentPosition(data.pausedAt || 0);
-      }
-    });
+      socket.on('voteUpdate', (data) => {
+        setSongVotes(prev => ({
+          ...prev,
+          [data.songId]: {
+            votes: data.votes,
+            required: data.required,
+            hasVoted: data.hasVoted
+          }
+        }));
+      });
 
-    socket.on('listenersUpdate', (data) => {
-      console.log('Listeners update:', data.listeners);
-      setListeners(data.listeners);
-    });
+      // Join the room
+      socket.emit('joinRoom', {
+        roomId: currentRoomId,
+        userName,
+        userId
+      });
 
-    return () => socket.disconnect();
-  }, []);
+      return () => socket.disconnect();
+    }
+  }, [currentRoomId, userName, userId]);
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
   };
 
+  const handleVoteSong = (songId: string) => {
+    if (!currentRoomId || !socketRef.current) return;
+    
+    socketRef.current.emit('voteSong', {
+      songId,
+      roomId: currentRoomId
+    });
+  };
+
   const handleAddToPlaylist = async (song: Song) => {
-    try {
-      await fetch('/api/playlist/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...song,
-          addedBy: userName // Add the username to the song
-        })
-      });
-    } catch (error) {
-      console.error('Failed to add song to playlist:', error);
-    }
+    if (!currentRoomId || !socketRef.current) return;
+
+    socketRef.current.emit('addToPlaylist', {
+      song: {
+        ...song,
+        addedBy: userName
+      },
+      roomId: currentRoomId
+    });
   };
 
   const songs = searchResults?.songs || [];
 
-  const handleStartSession = () => {
+  const handleStartSession = async () => {
     setHasUserInteracted(true);
-    // Play a silent audio to unlock autoplay
-    const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
-    audio.play().catch(() => {});
+    // Play a silent audio to unlock autoplay with proper volume
+    try {
+      const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+      audio.volume = 0.01;
+      await audio.play();
+      console.log('Audio context unlocked successfully');
+    } catch (e) {
+      console.log('Audio unlock failed:', e);
+    }
   };
 
   const handleJoinWithName = async (name: string) => {
@@ -106,16 +171,23 @@ export default function MusicPlayer() {
 
         if (data.user) {
           setUserName(data.user.username);
+          setUserId(data.user.id);
           setShowNamePrompt(false);
 
-          // Store user ID in localStorage for future sessions
+          // Store user data in localStorage for persistence
           localStorage.setItem('userId', data.user.id);
+          localStorage.setItem('userName', data.user.username);
 
-          if (socketRef.current) {
-            socketRef.current.emit('join', {
-              userName: data.user.username,
-              userId: data.user.id
-            });
+          // Auto-join public room
+          const roomsResponse = await fetch('/api/rooms');
+          const roomsData = await roomsResponse.json();
+          const publicRoom = roomsData.rooms.find((room: any) => room.name === "Public Room");
+          
+          if (publicRoom) {
+            setCurrentRoomId(publicRoom.id);
+            setShowRoomSelection(false);
+          } else {
+            setShowRoomSelection(true);
           }
         }
       } catch (error) {
@@ -124,69 +196,85 @@ export default function MusicPlayer() {
     }
   };
 
+  const handleRoomSelect = (roomId: string, roomIsCreator: boolean) => {
+    console.log('Room selected:', { roomId, roomIsCreator, userId });
+    setCurrentRoomId(roomId);
+    setIsCreator(roomIsCreator);
+    setShowRoomSelection(false);
+  };
+
+  // Auto-start session when component mounts
+  useEffect(() => {
+    handleStartSession();
+  }, []);
+
   // Auto-start session when a song is playing
   useEffect(() => {
     if (currentSong && isPlaying && !hasUserInteracted) {
-      // Auto-unlock autoplay with user gesture simulation
-      const unlockAutoplay = () => {
-        setHasUserInteracted(true);
-        // Play silent audio to unlock
-        const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
-        audio.play().catch(() => {});
-      };
-
-      // Add click listener to unlock on first user interaction
-      const handleFirstClick = () => {
-        unlockAutoplay();
-        document.removeEventListener('click', handleFirstClick);
-      };
-
-      document.addEventListener('click', handleFirstClick);
-
-      return () => document.removeEventListener('click', handleFirstClick);
+      handleStartSession();
     }
   }, [currentSong, isPlaying, hasUserInteracted]);
 
+  if (showNamePrompt) {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+          <h2 className="text-2xl font-bold mb-2">Join PixelPulse</h2>
+          <p className="text-muted-foreground mb-4">Enter your name to get started</p>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const input = e.currentTarget.elements.namedItem('userName') as HTMLInputElement;
+            handleJoinWithName(input.value);
+          }}>
+            <input
+              type="text"
+              name="userName"
+              placeholder="Your name..."
+              className="w-full px-4 py-2 bg-background border border-border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
+              autoFocus
+              maxLength={20}
+            />
+            <button
+              type="submit"
+              className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+            >
+              Continue
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (showRoomSelection) {
+    return (
+      <RoomSelection
+        userName={userName}
+        userId={userId}
+        onRoomSelect={handleRoomSelect}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background pb-32">
-      {showNamePrompt && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
-            <h2 className="text-2xl font-bold mb-2">Join the Listening Session</h2>
-            <p className="text-muted-foreground mb-4">Enter your name to see who else is listening</p>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const input = e.currentTarget.elements.namedItem('userName') as HTMLInputElement;
-              handleJoinWithName(input.value);
-            }}>
-              <input
-                type="text"
-                name="userName"
-                placeholder="Your name..."
-                className="w-full px-4 py-2 bg-background border border-border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
-                autoFocus
-                maxLength={20}
-              />
-              <button
-                type="submit"
-                className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-              >
-                Join
-              </button>
-            </form>
+
+      <div className="flex items-center justify-between p-4 border-b">
+        <div className="flex items-center gap-4">
+          <SearchBar onSearch={handleSearch} isLoading={isLoading} />
+          <div className="text-sm text-muted-foreground">
+            {isCreator ? '🎮 Private Room • You control the player' : '🌍 Public Room • Everyone can add songs'}
           </div>
         </div>
-      )}
+        <button
+          onClick={() => setShowRoomSelection(true)}
+          className="px-4 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors"
+        >
+          Switch Room
+        </button>
+      </div>
 
-      {!hasUserInteracted && currentSong && isPlaying && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-primary text-primary-foreground px-6 py-3 rounded-lg shadow-lg animate-pulse">
-          Click anywhere to enable audio
-        </div>
-      )}
-
-      <SearchBar onSearch={handleSearch} isLoading={isLoading} />
-
-      <div className="flex h-[calc(100vh-80px)]">
+      <div className="flex h-[calc(100vh-140px)]">
         <div className="flex-1 p-4 overflow-y-auto">
           <h2 className="text-xl font-semibold mb-4">Search Results</h2>
           {isLoading ? (
@@ -231,7 +319,12 @@ export default function MusicPlayer() {
             </div>
           )}
 
-          <h2 className="text-xl font-semibold mb-4">Playlist ({playlist.length})</h2>
+          <h2 className="text-xl font-semibold mb-4">
+            Playlist ({playlist.length})
+            <span className="text-sm font-normal text-muted-foreground ml-2">
+              • Vote to remove songs
+            </span>
+          </h2>
 
           {currentSong && (
             <div className="mb-4 p-3 bg-accent rounded-lg">
@@ -250,19 +343,22 @@ export default function MusicPlayer() {
           )}
           
           <div className="flex-1 overflow-y-auto space-y-2">
-            {playlist.map((song, index) => (
-              <div key={`${song.id}-${index}`} className={`flex items-center gap-2 p-2 rounded ${currentSong?.id === song.id ? 'bg-primary/20' : 'bg-muted/30'}`}>
-                <span className="text-xs text-muted-foreground w-6">{index + 1}</span>
-                <img src={song.thumbnail} alt={song.title} className="w-8 h-8 rounded object-cover" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{song.title}</p>
-                  <p className="text-xs text-muted-foreground truncate">{song.artist}</p>
-                  {song.addedBy && (
-                    <p className="text-xs text-primary/70 mt-0.5">by {song.addedBy}</p>
-                  )}
-                </div>
-              </div>
-            ))}
+            {playlist.map((song, index) => {
+              const isCurrentSong = currentSong?.id === song.id;
+              const voteData = songVotes[song.id] || { votes: 0, required: 1, hasVoted: false };
+              
+              return (
+                <PlaylistCard
+                  key={`${song.id}-${index}`}
+                  song={song}
+                  isCurrentSong={isCurrentSong}
+                  onVote={handleVoteSong}
+                  votes={voteData.votes}
+                  requiredVotes={voteData.required}
+                  hasVoted={voteData.hasVoted}
+                />
+              );
+            })}
           </div>
         </div>
       </div>
@@ -272,7 +368,10 @@ export default function MusicPlayer() {
         playlist={playlist}
         isPlaying={isPlaying}
         currentPosition={currentPosition}
+        serverTime={serverTime}
         socket={socketRef.current}
+        roomId={currentRoomId}
+        isPublicRoom={!isCreator}
       />
     </div>
   );

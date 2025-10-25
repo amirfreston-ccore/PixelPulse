@@ -195,6 +195,11 @@ export default function MusicPlayer() {
       },
       roomId: currentRoomId
     });
+
+    // Clear search results on mobile to show playlist
+    if (window.innerWidth < 1024) {
+      setSearchQuery('');
+    }
   };
 
   const handleToggleShuffle = () => {
@@ -397,35 +402,112 @@ export default function MusicPlayer() {
         </div>
       </div>
 
+      {/* Main Content */}
       <div className="flex flex-col lg:flex-row h-[calc(100vh-140px)]">
-        <div className="flex-1 p-4 overflow-y-auto">
-          <h2 className="text-xl font-semibold mb-4">Search Results</h2>
-          {isLoading ? (
-            <LoadingState />
-          ) : songs.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-2">
-              {songs.map((song) => (
-                <div key={song.id} className="flex items-center gap-3 p-3 bg-card rounded-lg border hover:bg-accent/50">
-                  <img src={song.thumbnail} alt={song.title} className="w-12 h-12 rounded object-cover flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{song.title}</p>
-                    <p className="text-sm text-muted-foreground truncate">{song.artist}</p>
+        {/* Search Results - Mobile: Full width, Desktop: Sidebar */}
+        <div className={`${songs.length > 0 ? 'block' : 'hidden lg:block'} lg:w-96 border-r bg-card/30 flex flex-col`}>
+          <div className="p-4 border-b">
+            <h2 className="text-lg font-semibold">Search Results</h2>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {isLoading ? (
+              <LoadingState />
+            ) : songs.length > 0 ? (
+              <div className="space-y-2">
+                {songs.map((song) => (
+                  <div key={song.id} className="flex items-center gap-3 p-3 bg-card rounded-lg border hover:bg-accent/50">
+                    <img src={song.thumbnail} alt={song.title} className="w-12 h-12 rounded object-cover flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate text-sm">{song.title}</p>
+                      <p className="text-xs text-muted-foreground truncate">{song.artist}</p>
+                    </div>
+                    <button 
+                      onClick={() => handleAddToPlaylist(song)}
+                      className="px-2 py-1 bg-primary text-primary-foreground rounded text-xs flex-shrink-0"
+                    >
+                      Add
+                    </button>
                   </div>
-                  <button 
-                    onClick={() => handleAddToPlaylist(song)}
-                    className="px-3 py-1 bg-primary text-primary-foreground rounded text-sm flex-shrink-0"
-                  >
-                    Add
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState />
-          )}
+                ))}
+              </div>
+            ) : (
+              <EmptyState />
+            )}
+          </div>
         </div>
 
-        <div className={`${showChat ? 'lg:w-96' : 'lg:w-80'} border-l bg-card/50 flex flex-col transition-all duration-300`}>
+        {/* Playlist Section */}
+        <div className={`${songs.length > 0 ? 'hidden lg:flex' : 'flex'} flex-1 ${showChat ? 'lg:w-auto' : 'lg:w-auto'} border-r bg-card/20 flex-col`}>
+          <div className="p-4 border-b">
+            <h2 className="text-lg font-semibold">
+              Playlist ({playlist.length})
+              <span className="text-sm font-normal text-muted-foreground ml-2">
+                • Vote to remove songs
+              </span>
+            </h2>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {listeners.length > 0 && (
+              <div className="mb-4 p-3 bg-primary/10 rounded-lg border border-primary/20">
+                <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  {listeners.length} {listeners.length === 1 ? 'person is' : 'people are'} listening
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {listeners.map((listener, index) => (
+                    <span key={index} className="px-2 py-1 bg-primary/20 text-xs rounded-full">
+                      {listener}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {currentSong && (
+              <div className="mb-4 p-3 bg-accent rounded-lg">
+                <p className="text-sm text-muted-foreground mb-1">Now Playing</p>
+                <div className="flex items-center gap-3">
+                  <img src={currentSong.thumbnail} alt={currentSong.title} className="w-16 h-16 rounded object-cover" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{currentSong.title}</p>
+                    <p className="text-sm text-muted-foreground truncate">{currentSong.artist}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {Math.floor(currentPosition)}s / {currentSong.duration} {isPlaying ? '▶' : '⏸'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            <div className="space-y-2">
+              {playlist.map((song, index) => {
+                const isCurrentSong = currentSong?.id === song.id;
+                const voteData = songVotes[song.id] || { votes: 0, required: 1, hasVoted: false };
+                
+                return (
+                  <PlaylistCard
+                    key={`${song.id}-${index}`}
+                    song={song}
+                    isCurrentSong={isCurrentSong}
+                    onVote={handleVoteSong}
+                    votes={voteData.votes}
+                    requiredVotes={voteData.required}
+                    hasVoted={voteData.hasVoted}
+                    canReorder={true}
+                    onReorder={handleReorderSongs}
+                    index={index}
+                  />
+                );
+              })}
+              {playlist.length === 0 && (
+                <EmptyState message="No songs in playlist" />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Chat Section */}
+        <div className={`${showChat ? 'lg:w-80' : 'lg:w-80'} border-l bg-card/50 flex flex-col transition-all duration-300`}>
           {showChat ? (
             <div className="flex flex-col h-full">
               <div className="p-4 border-b">
@@ -466,67 +548,8 @@ export default function MusicPlayer() {
               </div>
             </div>
           ) : (
-            <div className="p-4 flex flex-col h-full">
-              {listeners.length > 0 && (
-                <div className="mb-4 p-3 bg-primary/10 rounded-lg border border-primary/20">
-                  <p className="text-sm font-medium mb-2 flex items-center gap-2">
-                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                    {listeners.length} {listeners.length === 1 ? 'person is' : 'people are'} listening
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {listeners.map((listener, index) => (
-                      <span key={index} className="px-2 py-1 bg-primary/20 text-xs rounded-full">
-                        {listener}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <h2 className="text-xl font-semibold mb-4">
-                Playlist ({playlist.length})
-                <span className="text-sm font-normal text-muted-foreground ml-2">
-                  • Vote to remove songs
-                </span>
-              </h2>
-
-              {currentSong && (
-                <div className="mb-4 p-3 bg-accent rounded-lg">
-                  <p className="text-sm text-muted-foreground mb-1">Now Playing</p>
-                  <div className="flex items-center gap-3">
-                    <img src={currentSong.thumbnail} alt={currentSong.title} className="w-16 h-16 rounded object-cover" />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{currentSong.title}</p>
-                      <p className="text-sm text-muted-foreground truncate">{currentSong.artist}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {Math.floor(currentPosition)}s / {currentSong.duration} {isPlaying ? '▶' : '⏸'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              <div className="flex-1 overflow-y-auto space-y-2">
-                {playlist.map((song, index) => {
-                  const isCurrentSong = currentSong?.id === song.id;
-                  const voteData = songVotes[song.id] || { votes: 0, required: 1, hasVoted: false };
-                  
-                  return (
-                    <PlaylistCard
-                      key={`${song.id}-${index}`}
-                      song={song}
-                      isCurrentSong={isCurrentSong}
-                      onVote={handleVoteSong}
-                      votes={voteData.votes}
-                      requiredVotes={voteData.required}
-                      hasVoted={voteData.hasVoted}
-                      canReorder={true}
-                      onReorder={handleReorderSongs}
-                      index={index}
-                    />
-                  );
-                })}
-              </div>
+            <div className="p-4 flex items-center justify-center h-full text-muted-foreground">
+              <p className="text-sm">Chat is disabled</p>
             </div>
           )}
         </div>
@@ -534,14 +557,12 @@ export default function MusicPlayer() {
 
       <AudioPlayer
         currentSong={currentSong}
-        playlist={playlist}
         isPlaying={isPlaying}
         currentPosition={currentPosition}
         serverTime={serverTime}
         socket={socketRef.current}
         roomId={currentRoomId}
         isPublicRoom={!isCreator}
-        preserveAudioState={preserveAudioState}
       />
     </div>
   );

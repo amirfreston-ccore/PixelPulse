@@ -9,6 +9,7 @@ import { LoadingState } from "@/components/LoadingState";
 import { RoomSelection } from "@/components/RoomSelection";
 import { Song, SearchResult } from "@shared/schema";
 import { io, Socket } from "socket.io-client";
+import { useToast } from "@/hooks/use-toast";
 
 export default function MusicPlayer() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -26,7 +27,15 @@ export default function MusicPlayer() {
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
   const [isCreator, setIsCreator] = useState(false);
   const [songVotes, setSongVotes] = useState<Record<string, { votes: number; required: number; hasVoted: boolean }>>({});
+  const [isShuffled, setIsShuffled] = useState(false);
+  const [isLooped, setIsLooped] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ id: string; userId: string; userName: string; message: string; timestamp: number }>>([]);
+  const [showChat, setShowChat] = useState(false);
+  const [newMessage, setNewMessage] = useState("");
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [preserveAudioState, setPreserveAudioState] = useState(false);
   const socketRef = useRef<Socket | null>(null);
+  const { toast } = useToast();
 
   const currentSong = playlist[currentSongIndex] || null;
 
@@ -70,14 +79,35 @@ export default function MusicPlayer() {
         console.log('Playlist update received:', {
           currentSongIndex: data.currentSongIndex,
           isPlaying: data.isPlaying,
-          currentSong: data.playlist[data.currentSongIndex]?.title
+          currentSong: data.playlist[data.currentSongIndex]?.title,
+          preserveAudioState: data.preserveAudioState
         });
+
+        // Only preserve audio state if the current song is actually changing
+        const newCurrentSong = data.playlist[data.currentSongIndex];
+        const currentSongChanged = currentSong?.id !== newCurrentSong?.id;
+        
+        // Set preserveAudioState ONLY for song changes, not playlist reordering
+        if (data.preserveAudioState && currentSongChanged) {
+          console.log('Setting preserveAudioState to true - song changed');
+          setPreserveAudioState(true);
+        }
 
         setPlaylist(data.playlist);
         setCurrentSongIndex(data.currentSongIndex);
         setIsPlaying(data.isPlaying);
         setServerTime(data.serverTime);
         setIsCreator(data.isCreator);
+        setIsShuffled(data.isShuffled || false);
+        setIsLooped(data.isLooped || false);
+
+        // Reset preserveAudioState after a short delay to allow normal audio control
+        if (data.preserveAudioState && currentSongChanged) {
+          setTimeout(() => {
+            console.log('Resetting preserveAudioState to false');
+            setPreserveAudioState(false);
+          }, 100);
+        }
 
         // Calculate accurate position using server time
         if (data.currentPosition !== undefined) {
@@ -106,12 +136,37 @@ export default function MusicPlayer() {
         }));
       });
 
+      socket.on('newMessage', (message) => {
+        setChatMessages(prev => [...prev, message]);
+        
+        // Show toast if chat is closed and message is from another user
+        if (!showChat && message.userId !== userId) {
+          setUnreadCount(prev => prev + 1);
+          toast({
+            title: `💬 ${message.userName}`,
+            description: message.message.length > 50 ? message.message.substring(0, 50) + "..." : message.message,
+          });
+        }
+      });
+
+      socket.on('chatHistory', (messages) => {
+        setChatMessages(messages);
+      });
+
+      socket.on('error', (data) => {
+        console.error('Socket error:', data.message);
+        // You could show a toast notification here
+      });
+
       // Join the room
       socket.emit('joinRoom', {
         roomId: currentRoomId,
         userName,
         userId
       });
+
+      // Request chat history
+      socket.emit('getChatHistory', currentRoomId);
 
       return () => socket.disconnect();
     }
@@ -140,6 +195,37 @@ export default function MusicPlayer() {
       },
       roomId: currentRoomId
     });
+  };
+
+  const handleToggleShuffle = () => {
+    if (!currentRoomId || !socketRef.current) return;
+    socketRef.current.emit('toggleShuffle', currentRoomId);
+  };
+
+  const handleToggleLoop = () => {
+    if (!currentRoomId || !socketRef.current) return;
+    socketRef.current.emit('toggleLoop', currentRoomId);
+  };
+
+  const handleReorderSongs = (fromIndex: number, toIndex: number) => {
+    if (!currentRoomId || !socketRef.current) return;
+    console.log('Reordering songs:', { fromIndex, toIndex, roomId: currentRoomId });
+    socketRef.current.emit('reorderSongs', {
+      roomId: currentRoomId,
+      fromIndex,
+      toIndex
+    });
+  };
+
+  const handleSendMessage = () => {
+    if (!currentRoomId || !socketRef.current || !newMessage.trim()) return;
+    
+    socketRef.current.emit('sendMessage', {
+      roomId: currentRoomId,
+      message: newMessage.trim()
+    });
+    
+    setNewMessage("");
   };
 
   const songs = searchResults?.songs || [];
@@ -258,39 +344,76 @@ export default function MusicPlayer() {
 
   return (
     <div className="min-h-screen bg-background pb-32">
-
-      <div className="flex items-center justify-between p-4 border-b">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between p-4 border-b gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 flex-1">
           <SearchBar onSearch={handleSearch} isLoading={isLoading} />
           <div className="text-sm text-muted-foreground">
             {isCreator ? '🎮 Private Room • You control the player' : '🌍 Public Room • Everyone can add songs'}
           </div>
         </div>
-        <button
-          onClick={() => setShowRoomSelection(true)}
-          className="px-4 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors"
-        >
-          Switch Room
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleToggleShuffle}
+            className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+              isShuffled 
+                ? 'bg-primary text-primary-foreground' 
+                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            }`}
+          >
+            🔀 Shuffle
+          </button>
+          <button
+            onClick={handleToggleLoop}
+            className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+              isLooped 
+                ? 'bg-primary text-primary-foreground' 
+                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            }`}
+          >
+            🔁 Loop
+          </button>
+          <button
+            onClick={() => {
+              setShowChat(!showChat);
+              if (!showChat) {
+                setUnreadCount(0);
+              }
+            }}
+            className="px-3 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors relative"
+          >
+            💬 Chat
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setShowRoomSelection(true)}
+            className="px-3 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors"
+          >
+            Switch Room
+          </button>
+        </div>
       </div>
 
-      <div className="flex h-[calc(100vh-140px)]">
+      <div className="flex flex-col lg:flex-row h-[calc(100vh-140px)]">
         <div className="flex-1 p-4 overflow-y-auto">
           <h2 className="text-xl font-semibold mb-4">Search Results</h2>
           {isLoading ? (
             <LoadingState />
           ) : songs.length > 0 ? (
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-2">
               {songs.map((song) => (
                 <div key={song.id} className="flex items-center gap-3 p-3 bg-card rounded-lg border hover:bg-accent/50">
-                  <img src={song.thumbnail} alt={song.title} className="w-12 h-12 rounded object-cover" />
+                  <img src={song.thumbnail} alt={song.title} className="w-12 h-12 rounded object-cover flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate">{song.title}</p>
                     <p className="text-sm text-muted-foreground truncate">{song.artist}</p>
                   </div>
                   <button 
                     onClick={() => handleAddToPlaylist(song)}
-                    className="px-3 py-1 bg-primary text-primary-foreground rounded text-sm"
+                    className="px-3 py-1 bg-primary text-primary-foreground rounded text-sm flex-shrink-0"
                   >
                     Add
                   </button>
@@ -302,64 +425,110 @@ export default function MusicPlayer() {
           )}
         </div>
 
-        <div className="w-96 border-l bg-card/50 p-4 flex flex-col">
-          {listeners.length > 0 && (
-            <div className="mb-4 p-3 bg-primary/10 rounded-lg border border-primary/20">
-              <p className="text-sm font-medium mb-2 flex items-center gap-2">
-                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                {listeners.length} {listeners.length === 1 ? 'person is' : 'people are'} listening
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {listeners.map((listener, index) => (
-                  <span key={index} className="px-2 py-1 bg-primary/20 text-xs rounded-full">
-                    {listener}
-                  </span>
+        <div className={`${showChat ? 'lg:w-96' : 'lg:w-80'} border-l bg-card/50 flex flex-col transition-all duration-300`}>
+          {showChat ? (
+            <div className="flex flex-col h-full">
+              <div className="p-4 border-b">
+                <h2 className="text-lg font-semibold">Chat</h2>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {chatMessages.map((msg) => (
+                  <div key={msg.id} className="bg-muted/50 rounded-lg p-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">{msg.userName}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p className="text-sm">{msg.message}</p>
+                  </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          <h2 className="text-xl font-semibold mb-4">
-            Playlist ({playlist.length})
-            <span className="text-sm font-normal text-muted-foreground ml-2">
-              • Vote to remove songs
-            </span>
-          </h2>
-
-          {currentSong && (
-            <div className="mb-4 p-3 bg-accent rounded-lg">
-              <p className="text-sm text-muted-foreground mb-1">Now Playing</p>
-              <div className="flex items-center gap-3">
-                <img src={currentSong.thumbnail} alt={currentSong.title} className="w-16 h-16 rounded object-cover" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{currentSong.title}</p>
-                  <p className="text-sm text-muted-foreground truncate">{currentSong.artist}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {Math.floor(currentPosition)}s / {currentSong.duration} {isPlaying ? '▶' : '⏸'}
-                  </p>
+              <div className="p-4 border-t">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                    placeholder="Type a message..."
+                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    maxLength={500}
+                  />
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={!newMessage.trim()}
+                    className="px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
+                  >
+                    Send
+                  </button>
                 </div>
               </div>
             </div>
-          )}
-          
-          <div className="flex-1 overflow-y-auto space-y-2">
-            {playlist.map((song, index) => {
-              const isCurrentSong = currentSong?.id === song.id;
-              const voteData = songVotes[song.id] || { votes: 0, required: 1, hasVoted: false };
+          ) : (
+            <div className="p-4 flex flex-col h-full">
+              {listeners.length > 0 && (
+                <div className="mb-4 p-3 bg-primary/10 rounded-lg border border-primary/20">
+                  <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                    {listeners.length} {listeners.length === 1 ? 'person is' : 'people are'} listening
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {listeners.map((listener, index) => (
+                      <span key={index} className="px-2 py-1 bg-primary/20 text-xs rounded-full">
+                        {listener}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <h2 className="text-xl font-semibold mb-4">
+                Playlist ({playlist.length})
+                <span className="text-sm font-normal text-muted-foreground ml-2">
+                  • Vote to remove songs
+                </span>
+              </h2>
+
+              {currentSong && (
+                <div className="mb-4 p-3 bg-accent rounded-lg">
+                  <p className="text-sm text-muted-foreground mb-1">Now Playing</p>
+                  <div className="flex items-center gap-3">
+                    <img src={currentSong.thumbnail} alt={currentSong.title} className="w-16 h-16 rounded object-cover" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{currentSong.title}</p>
+                      <p className="text-sm text-muted-foreground truncate">{currentSong.artist}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {Math.floor(currentPosition)}s / {currentSong.duration} {isPlaying ? '▶' : '⏸'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               
-              return (
-                <PlaylistCard
-                  key={`${song.id}-${index}`}
-                  song={song}
-                  isCurrentSong={isCurrentSong}
-                  onVote={handleVoteSong}
-                  votes={voteData.votes}
-                  requiredVotes={voteData.required}
-                  hasVoted={voteData.hasVoted}
-                />
-              );
-            })}
-          </div>
+              <div className="flex-1 overflow-y-auto space-y-2">
+                {playlist.map((song, index) => {
+                  const isCurrentSong = currentSong?.id === song.id;
+                  const voteData = songVotes[song.id] || { votes: 0, required: 1, hasVoted: false };
+                  
+                  return (
+                    <PlaylistCard
+                      key={`${song.id}-${index}`}
+                      song={song}
+                      isCurrentSong={isCurrentSong}
+                      onVote={handleVoteSong}
+                      votes={voteData.votes}
+                      requiredVotes={voteData.required}
+                      hasVoted={voteData.hasVoted}
+                      canReorder={true}
+                      onReorder={handleReorderSongs}
+                      index={index}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -372,6 +541,7 @@ export default function MusicPlayer() {
         socket={socketRef.current}
         roomId={currentRoomId}
         isPublicRoom={!isCreator}
+        preserveAudioState={preserveAudioState}
       />
     </div>
   );

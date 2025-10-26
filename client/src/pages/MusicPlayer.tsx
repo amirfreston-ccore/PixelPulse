@@ -13,6 +13,14 @@ import { useToast } from "@/hooks/use-toast";
 import { TiArrowShuffle } from "react-icons/ti";
 import { SlLoop } from "react-icons/sl";
 import { IoIosChatboxes } from "react-icons/io";
+import { ThumbsDown } from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { MdOutlinePublic } from "react-icons/md";
 import { FaExchangeAlt } from "react-icons/fa";
 
@@ -176,6 +184,12 @@ export default function MusicPlayer() {
 
       socket.on("chatHistory", (messages) => {
         setChatMessages(messages);
+      });
+
+      socket.on("messagesRemoved", (data) => {
+        setChatMessages((prev) =>
+          prev.filter((msg) => msg.userId !== data.userId)
+        );
       });
 
       socket.on("error", (data) => {
@@ -424,22 +438,65 @@ export default function MusicPlayer() {
           >
             <SlLoop /> Loop
           </button>
-          <button
-            onClick={() => {
-              setShowChat(!showChat);
-              if (!showChat) {
-                setUnreadCount(0);
-              }
-            }}
-            className="flex items-center gap-2 px-3 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors relative"
-          >
-            <IoIosChatboxes /> Chat
-            {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </span>
-            )}
-          </button>
+          <Sheet open={showChat} onOpenChange={setShowChat}>
+            <SheetTrigger asChild>
+              <button
+                onClick={() => {
+                  if (!showChat) {
+                    setUnreadCount(0);
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors relative"
+              >
+                <IoIosChatboxes /> Chat
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-80 p-0 flex flex-col">
+              <SheetHeader className="p-4 border-b flex-shrink-0">
+                <SheetTitle>Chat</SheetTitle>
+              </SheetHeader>
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {chatMessages.map((msg) => (
+                  <div key={msg.id} className="bg-muted/50 rounded-lg p-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">
+                        {msg.userName}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p className="text-sm">{msg.message}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="p-4 border-t flex-shrink-0">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+                    placeholder="Type a message..."
+                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    maxLength={500}
+                  />
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={!newMessage.trim()}
+                    className="px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
 
           <button
             onClick={() => setShowRoomSelection(true)}
@@ -504,9 +561,9 @@ export default function MusicPlayer() {
 
         {/* Playlist Section */}
         <div
-          className={`${songs.length > 0 ? "hidden lg:flex" : "flex"} flex-1 ${
-            showChat ? "lg:w-auto" : "lg:w-auto"
-          } border-r bg-card/20 flex-col`}
+          className={`${
+            songs.length > 0 ? "hidden lg:flex" : "flex"
+          } flex-1 border-r bg-card/20 flex-col`}
         >
           <div className="p-4 border-b">
             <h2 className="text-lg font-semibold">
@@ -540,9 +597,33 @@ export default function MusicPlayer() {
 
             {currentSong && (
               <div className="mb-4 p-3 bg-accent rounded-lg">
-                <p className="text-sm text-muted-foreground mb-1">
-                  Now Playing
-                </p>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-sm text-muted-foreground">Now Playing</p>
+                  <button
+                    onClick={() => handleVoteSong(currentSong.id)}
+                    className={`px-2 py-1 rounded text-xs transition-colors flex items-center gap-1 ${
+                      (() => {
+                        const voteData = songVotes[currentSong.id] || { votes: 0, required: 1, hasVoted: false };
+                        const votesLeft = voteData.required - voteData.votes;
+                        return votesLeft === 1 
+                          ? "bg-red-500 hover:bg-red-600 text-white" 
+                          : "border border-red-500 text-red-500 hover:bg-red-50";
+                      })()
+                    }`}
+                  >
+                    <ThumbsDown className="h-3 w-3" />
+                    {(() => {
+                      const voteData = songVotes[currentSong.id] || { votes: 0, required: 1, hasVoted: false };
+                      return `${voteData.votes}/${voteData.required}`;
+                    })()}
+                  </button>
+
+
+
+
+
+
+                </div>
                 <div className="flex items-center gap-3">
                   <img
                     src={currentSong.thumbnail}
@@ -597,8 +678,8 @@ export default function MusicPlayer() {
         {/* Chat Section */}
         <div
           className={`${
-            showChat ? "lg:w-80" : "lg:w-80"
-          } border-l bg-card/50 flex flex-col transition-all duration-300`}
+            showChat ? "flex lg:w-80" : "hidden lg:flex lg:w-80"
+          } border-l bg-card/50 flex-col transition-all duration-300`}
         >
           {showChat ? (
             <div className="flex flex-col h-full">

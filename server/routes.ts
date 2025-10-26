@@ -719,6 +719,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (listener) {
           console.log(`${listener.name} disconnected from room ${currentRoomId}`);
+          
+          // Remove user's messages from chat
+          if (roomMessages.has(currentRoomId)) {
+            const messages = roomMessages.get(currentRoomId)!;
+            const filteredMessages = messages.filter(msg => msg.userId !== listener.userId);
+            roomMessages.set(currentRoomId, filteredMessages);
+            
+            // Notify remaining users about message removal
+            io.to(currentRoomId).emit('messagesRemoved', { userId: listener.userId });
+          }
+          
           roomListener.delete(socket.id);
 
           // Send updated listeners to room
